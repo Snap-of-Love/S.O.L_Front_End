@@ -1,18 +1,11 @@
 import { useEffect, useState } from 'react';
-import { db } from '../lib/firebase';
-import { doc, getDoc } from 'firebase/firestore';
+import { fetchCloudShare, type ShareData } from '../lib/api';
 import { playTick } from '../lib/audioUtils';
 import { Download, Camera, AlertTriangle, Disc } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 interface SharePageProps {
   id: string | null;
-}
-
-interface ShareData {
-  imageUrl: string;
-  layout: string;
-  createdAt: any;
 }
 
 export default function SharePage({ id }: SharePageProps) {
@@ -30,11 +23,10 @@ export default function SharePage({ id }: SharePageProps) {
       }
 
       try {
-        const docRef = doc(db, 'shares', id);
-        const docSnap = await getDoc(docRef);
+        const data = await fetchCloudShare(id);
 
-        if (docSnap.exists()) {
-          setShareData(docSnap.data() as ShareData);
+        if (data) {
+          setShareData(data);
         } else {
           setError('This retro memory does not exist or has expired.');
         }

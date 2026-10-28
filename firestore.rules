@@ -1,11 +1,73 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /shares/{shareId} {
-      allow read, write: if true;
+
+    // =========================================================================
+    // Helper & Domain Validator Functions
+    // =========================================================================
+
+    function isValidShare(data) {
+      return data.keys().hasAll(['imageUrl', 'layout', 'createdAt'])
+        && data.keys().hasOnly(['imageUrl', 'layout', 'format', 'createdAt'])
+        && data.imageUrl is string
+        && data.imageUrl.size() > 0
+        && data.imageUrl.size() < 1048576
+        && data.layout is string
+        && data.layout.size() > 0
+        && data.layout.size() <= 100
+        && (!('format' in data) || (data.format is string && data.format in ['jpg', 'png', 'gif']))
+        && data.createdAt != null
+        && data.createdAt is timestamp;
     }
+
+    function isValidTransaction(data) {
+      return data.keys().hasAll(['status', 'createdAt'])
+        && data.keys().hasOnly(['status', 'createdAt', 'amount', 'method', 'referenceId', 'updatedAt'])
+        && data.status is string
+        && data.status.size() > 0
+        && data.status.size() <= 64
+        && data.createdAt != null
+        && (data.createdAt is timestamp || data.createdAt is int)
+        && (!('amount' in data) || (data.amount is int && data.amount >= 0))
+        && (!('method' in data) || (data.method is string && data.method.size() <= 64))
+        && (!('referenceId' in data) || (data.referenceId is string && data.referenceId.size() <= 128));
+    }
+
+    // =========================================================================
+    // Collection Rules
+    // =========================================================================
+
+    // Shared Photobooth Strips (/shares/{shareId})
+    // - Public single-document read by ID (get) for QR code share links; collection enumeration (list) denied.
+    // - Immutable once created: update and delete are strictly denied.
+    match /shares/{shareId} {
+      allow get: if true;
+      allow list: if false;
+      allow create: if request.resource.data.keys().hasAll(['imageUrl', 'layout', 'createdAt'])
+        && request.resource.data.imageUrl is string
+        && request.resource.data.imageUrl.size() > 0
+        && request.resource.data.imageUrl.size() < 1048576
+        && request.resource.data.layout is string
+        && isValidShare(request.resource.data);
+      allow update, delete: if false;
+    }
+
+    // Payment / Session Transactions (/transactions/{trxId})
+    // - Single-document status lookup allowed by ID (get); collection enumeration (list) denied.
+    // - Immutable from untrusted clients once created: update and delete are strictly denied.
     match /transactions/{trxId} {
-      allow read, write: if true;
+      allow get: if true;
+      allow list: if false;
+      allow create: if request.resource.data.keys().hasAll(['status', 'createdAt'])
+        && request.resource.data.status is string
+        && request.resource.data.createdAt != null
+        && isValidTransaction(request.resource.data);
+      allow update, delete: if false;
+    }
+
+    // Default Deny All Other Paths
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

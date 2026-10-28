@@ -23,8 +23,7 @@ import {
   Loader2,
   Lock
 } from 'lucide-react';
-import { doc, setDoc, collection, onSnapshot, getDoc } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { createCloudShare } from '../lib/api';
 import qrcode from 'qrcode-generator';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
@@ -442,10 +441,6 @@ export default function Photobooth() {
     setShareUrl(null);
     setCopied(false);
 
-    // Pre-create share document to get the ID
-    const shareDocRef = doc(collection(db, 'shares'));
-    const docId = shareDocRef.id;
-
     try {
       let url = '';
       let filename = `SOL-Booth-${new Date().getTime()}`;
@@ -600,11 +595,10 @@ export default function Photobooth() {
 
           const base64Image = await getBase64(uploadBlob);
 
-          await setDoc(shareDocRef, {
+          const { id: docId } = await createCloudShare({
             imageUrl: base64Image,
             layout: format === 'gif' ? 'animated' : activeLayoutId,
             format: format,
-            createdAt: new Date()
           });
 
           // Build sharing URL dynamically using window.location.origin to match the current domain
