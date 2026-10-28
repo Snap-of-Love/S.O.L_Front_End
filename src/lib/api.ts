@@ -1,5 +1,5 @@
 /**
- * Decoupled API client for communicating with the standalone `Nome_Back_End` service.
+ * Decoupled API client for communicating with the standalone `S.O.L_Back_End` service.
  * Configures base URL, authentication headers (`Authorization` / `X-API-Key`),
  * and RFC 7807 Problem Details error handling.
  */
