@@ -173,34 +173,67 @@ export const VISUAL_FILTERS = {
 
 export type FilterType = keyof typeof VISUAL_FILTERS;
 
+/**
+ * Cached 256x256 film-grain noise canvases keyed by quantized intensity (1..100) (`FE-02`).
+ * Eliminates per-slot canvas allocation and 262,144 `Math.random()` calls on every frame render.
+ */
+const grainCanvasCache = new Map<number, HTMLCanvasElement>();
+
+/**
+ * Cached static QR matrix for `https://www.instagram.com/snapoflove.id/` (`FE-02`).
+ */
+let cachedInstagramQr: ReturnType<typeof qrcode> | null = null;
+
+function getInstagramQr(): ReturnType<typeof qrcode> {
+  if (!cachedInstagramQr) {
+    const qr = qrcode(0, 'M');
+    qr.addData('https://www.instagram.com/snapoflove.id/');
+    qr.make();
+    cachedInstagramQr = qr;
+  }
+  return cachedInstagramQr;
+}
+
+/**
+ * Renders an analog film-grain pattern over the current clipped region using a cached noise tile (`FE-02`).
+ *
+ * @param {CanvasRenderingContext2D} ctx - Destination 2D canvas context
+ * @param {number} width - Strip width in pixels
+ * @param {number} height - Strip height in pixels
+ * @param {number} intensity - Film grain intensity (`0` to `100`)
+ */
 export function drawGrain(
   ctx: CanvasRenderingContext2D,
   width: number,
   height: number,
   intensity: number
-) {
+): void {
   if (intensity <= 0) return;
 
-  const noiseCanvas = document.createElement('canvas');
-  noiseCanvas.width = 256;
-  noiseCanvas.height = 256;
-  const nCtx = noiseCanvas.getContext('2d');
-  if (!nCtx) return;
+  const bucket = Math.max(1, Math.min(100, Math.round(intensity)));
+  let noiseCanvas = grainCanvasCache.get(bucket);
 
-  const imgData = nCtx.createImageData(256, 256);
-  const data = imgData.data;
+  if (!noiseCanvas) {
+    noiseCanvas = document.createElement('canvas');
+    noiseCanvas.width = 256;
+    noiseCanvas.height = 256;
+    const nCtx = noiseCanvas.getContext('2d');
+    if (!nCtx) return;
 
-  // Max alpha correlates to intensity (scale 0-100)
-  const maxAlpha = Math.min((intensity / 100) * 80, 255);
+    const imgData = nCtx.createImageData(256, 256);
+    const data = imgData.data;
+    const maxAlpha = Math.min((bucket / 100) * 80, 255);
 
-  for (let i = 0; i < data.length; i += 4) {
-    const v = Math.random() * 255;
-    data[i] = v; // R
-    data[i + 1] = v; // G
-    data[i + 2] = v; // B
-    data[i + 3] = Math.random() * maxAlpha; // A
+    for (let i = 0; i < data.length; i += 4) {
+      const v = Math.random() * 255;
+      data[i] = v;
+      data[i + 1] = v;
+      data[i + 2] = v;
+      data[i + 3] = Math.random() * maxAlpha;
+    }
+    nCtx.putImageData(imgData, 0, 0);
+    grainCanvasCache.set(bucket, noiseCanvas);
   }
-  nCtx.putImageData(imgData, 0, 0);
 
   ctx.globalCompositeOperation = 'source-over';
   const pattern = ctx.createPattern(noiseCanvas, 'repeat');
@@ -604,11 +637,9 @@ export function renderStrip(
     ctx.fillText(`'${dateStr}`, layout.datePos.x, layout.datePos.y);
   }
 
-  // Draw QR code linking to Instagram page and Brand Signature
+  // Draw QR code linking to Instagram page and Brand Signature (cached matrix, FE-02)
   try {
-    const qr = qrcode(0, 'M');
-    qr.addData('https://www.instagram.com/snapoflove.id/');
-    qr.make();
+    const qr = getInstagramQr();
 
     const moduleCount = qr.getModuleCount();
     const qrSize = 64; // Enhanced size for 100% scannability across GIF, PNG, and JPG

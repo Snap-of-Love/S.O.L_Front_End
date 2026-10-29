@@ -210,8 +210,10 @@ export default function Photobooth() {
   const [flash, setFlash] = useState(false);
   const [capturedPhotos, setCapturedPhotos] = useState<HTMLCanvasElement[][]>([]);
   const [previewCanvasDataUrl, setPreviewCanvasDataUrl] = useState<string | null>(null);
+  const [animatedFrameUrls, setAnimatedFrameUrls] = useState<string[]>([]);
   const [isExporting, setIsExporting] = useState(false);
   const [selectedPhotoIndex, setSelectedPhotoIndex] = useState<number>(2); // for static frame review (defaults to middle burst frame)
+  const sessionAbortRef = useRef<AbortController | null>(null);
 
   const activeLayout = LAYOUTS[activeLayoutId];
   const activeTheme = CARD_THEMES[activeThemeId];
@@ -300,22 +302,47 @@ export default function Photobooth() {
     return canvas;
   }, [videoElement]);
 
-  // Run full photo session loop
-  // Run full photo session loop
+  // Run full photo session loop with AbortController cancellation support (FE-03)
   const runSession = useCallback(async () => {
+    sessionAbortRef.current?.abort();
+    const abortController = new AbortController();
+    sessionAbortRef.current = abortController;
+    const { signal } = abortController;
+
+    const sleepAbortable = (ms: number) =>
+      new Promise<boolean>((resolve) => {
+        if (signal.aborted) {
+          resolve(false);
+          return;
+        }
+        const timer = setTimeout(() => {
+          signal.removeEventListener('abort', onAbort);
+          resolve(true);
+        }, ms);
+        const onAbort = () => {
+          clearTimeout(timer);
+          resolve(false);
+        };
+        signal.addEventListener('abort', onAbort, { once: true });
+      });
+
     setCapturedPhotos([]);
     const totalShots = activeLayout.slots.length;
     const newPhotos: HTMLCanvasElement[][] = [];
 
     for (let shot = 0; shot < totalShots; shot++) {
+      if (signal.aborted) return;
       // Countdown phase using selected photoDelay
       setCaptureState('countdown');
       for (let i = photoDelay; i > 0; i--) {
+        if (signal.aborted) return;
         setCountdownNum(i);
         playTick();
-        await new Promise((r) => setTimeout(r, 1000));
+        const ok = await sleepAbortable(1000);
+        if (!ok) return;
       }
 
+      if (signal.aborted) return;
       // Capture phase (burst of 5 quick frames for animating GIF layout)
       setCaptureState('capturing');
       setFlash(true);
@@ -325,13 +352,16 @@ export default function Photobooth() {
 
       const frames: HTMLCanvasElement[] = [];
       for (let f = 0; f < 5; f++) {
+        if (signal.aborted) return;
         frames.push(captureFrame());
-        await new Promise((r) => setTimeout(r, 100)); // 100ms quick burst
+        const ok = await sleepAbortable(100); // 100ms quick burst
+        if (!ok) return;
       }
       newPhotos.push(frames);
       setCapturedPhotos([...newPhotos]); // Update active photo cache
     }
 
+    if (signal.aborted) return;
     setCaptureState('completed');
     setScreen('review');
   }, [activeLayout, photoDelay, spawnHearts, captureFrame]);
@@ -355,9 +385,26 @@ export default function Photobooth() {
 
 
 
-  // Re-generate dynamic high-end preview strip on changes
+  // Re-generate dynamic high-end preview strip on changes (pre-computing 5 burst frames when animated, FE-01)
   useEffect(() => {
-    if (screen === 'review' && capturedPhotos.length > 0) {
+    if (screen !== 'review' || capturedPhotos.length === 0) return;
+
+    if (isAnimatedPreview) {
+      const urls = [0, 1, 2, 3, 4].map((idx) =>
+        renderStrip(
+          capturedPhotos,
+          activeLayout,
+          grainIntensity,
+          showDate,
+          idx,
+          activeThemeId,
+          activeFilterId,
+          lensEffect
+        ).toDataURL('image/jpeg', 0.92)
+      );
+      setAnimatedFrameUrls(urls);
+      setPreviewCanvasDataUrl(urls[selectedPhotoIndex] ?? urls[0] ?? null);
+    } else {
       const cvs = renderStrip(
         capturedPhotos,
         activeLayout,
@@ -370,20 +417,31 @@ export default function Photobooth() {
       );
       setPreviewCanvasDataUrl(cvs.toDataURL('image/jpeg', 0.95));
     }
-  }, [screen, capturedPhotos, activeLayout, grainIntensity, showDate, selectedPhotoIndex, activeThemeId, activeFilterId, lensEffect]);
+  }, [
+    screen,
+    capturedPhotos,
+    activeLayout,
+    grainIntensity,
+    showDate,
+    selectedPhotoIndex,
+    activeThemeId,
+    activeFilterId,
+    lensEffect,
+    isAnimatedPreview,
+  ]);
 
-  // Animated "Live" Preview cycling effect
+  // Animated "Live" Preview cycling effect over pre-computed DataURLs (zero canvas re-renders in interval, FE-01)
   useEffect(() => {
-    let interval: any = null;
-    if (screen === 'review' && isAnimatedPreview) {
-      interval = setInterval(() => {
-        setSelectedPhotoIndex((prev) => (prev + 1) % 5);
-      }, 130);
+    if (screen !== 'review' || !isAnimatedPreview || animatedFrameUrls.length === 0) {
+      return;
     }
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [screen, isAnimatedPreview]);
+    let frameCursor = 0;
+    const interval = setInterval(() => {
+      frameCursor = (frameCursor + 1) % animatedFrameUrls.length;
+      setPreviewCanvasDataUrl(animatedFrameUrls[frameCursor] ?? null);
+    }, 130);
+    return () => clearInterval(interval);
+  }, [screen, isAnimatedPreview, animatedFrameUrls]);
 
   // High quality exporters
   const handleExport = async (format: 'jpg' | 'png' | 'gif') => {
@@ -559,6 +617,9 @@ export default function Photobooth() {
         } catch (err) {
           console.error('Firebase cloud sync failed:', err);
         } finally {
+          if (url) {
+            URL.revokeObjectURL(url);
+          }
           setIsUploadingCloud(false);
         }
       })();
@@ -604,11 +665,13 @@ export default function Photobooth() {
   }, [showAdOverlay, adCountdown]);
 
   const startNewSession = () => {
+    sessionAbortRef.current?.abort();
     setIsFlashing(true);
     setTimeout(() => {
       setCapturedPhotos([]);
       setCaptureState('idle');
       setPreviewCanvasDataUrl(null);
+      setAnimatedFrameUrls([]);
       setLensEffect('none');
       setIsAnimatedPreview(false);
       setSelectedPhotoIndex(2);
@@ -623,11 +686,13 @@ export default function Photobooth() {
   };
 
   const returnToMenu = () => {
+    sessionAbortRef.current?.abort();
     setIsFlashing(true);
     setTimeout(() => {
       setCapturedPhotos([]);
       setCaptureState('idle');
       setPreviewCanvasDataUrl(null);
+      setAnimatedFrameUrls([]);
       setLensEffect('none');
       setIsAnimatedPreview(false);
       setSelectedPhotoIndex(2);
