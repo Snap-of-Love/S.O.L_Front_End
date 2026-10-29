@@ -38,8 +38,7 @@ import {
   LensEffectType
 } from '../lib/renderUtils';
 import { createGifExporter } from '../lib/exportUtils';
-import { playTick, playShutter, playDing, startLofiBgm, stopLofiBgm } from '../lib/audioUtils';
-import { useMagnetic } from '../hooks/useMagnetic';
+import { playTick, playShutter, playDing } from '../lib/audioUtils';
 import Lobby from './Lobby';
 import Preloader from './Preloader';
 
@@ -82,23 +81,6 @@ function PixelHeart({ className, style }: { className?: string; style?: React.CS
 export default function Photobooth() {
   const [videoElement, setVideoElement] = useState<HTMLVideoElement | null>(null);
   const [hearts, setHearts] = useState<HeartParticle[]>([]);
-  const [tilt, setTilt] = useState({ x: 0, y: 0 });
-  const [isCardHovered, setIsCardHovered] = useState(false);
-
-  const handleCardMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    const el = e.currentTarget;
-    const rect = el.getBoundingClientRect();
-    const x = e.clientX - rect.left - rect.width / 2;
-    const y = e.clientY - rect.top - rect.height / 2;
-    const rotateX = -(y / (rect.height / 2)) * 12;
-    const rotateY = (x / (rect.width / 2)) * 12;
-    setTilt({ x: rotateX, y: rotateY });
-  }, []);
-
-  const handleCardMouseLeave = useCallback(() => {
-    setIsCardHovered(false);
-    setTilt({ x: 0, y: 0 });
-  }, []);
 
   const spawnHearts = useCallback(() => {
     const heartColors = ['#8e1616'];
@@ -144,7 +126,6 @@ export default function Photobooth() {
   const [showDate, setShowDate] = useState<boolean>(true);
   const [photoDelay, setPhotoDelay] = useState<number>(3); // custom delay in seconds
   const [lensEffect, setLensEffect] = useState<LensEffectType>('none');
-  const [isBgmPlaying, setIsBgmPlaying] = useState<boolean>(false);
   const [isAnimatedPreview, setIsAnimatedPreview] = useState<boolean>(false);
   const [showThankYouPopup, setShowThankYouPopup] = useState<boolean>(false);
   const [isUploadingCloud, setIsUploadingCloud] = useState<boolean>(false);
@@ -170,22 +151,31 @@ export default function Photobooth() {
     return () => mq.removeEventListener('change', handler);
   }, []);
 
-  // Global Custom Cursor & Mouse position states
-  const [globalMousePos, setGlobalMousePos] = useState({ x: -100, y: -100 });
+  // Ref-isolated Custom Cursor tracking (eliminates full-tree React re-renders on mousemove, FE-01)
+  const cursorRef = useRef<HTMLDivElement | null>(null);
+  const isHoveringClickableRef = useRef<boolean>(false);
   const [isHoveringClickable, setIsHoveringClickable] = useState<boolean>(false);
   const [isFlashing, setIsFlashing] = useState<boolean>(false);
 
-  const handleGlobalMouseMove = (e: React.MouseEvent) => {
-    if (!isFinePointer) return;
-    setGlobalMousePos({ x: e.clientX, y: e.clientY });
-    
-    // Check if hovering a button, link, click trigger or input
-    const target = e.target as HTMLElement;
-    const isClickable = target.closest('button, a, [role="button"], input, select, textarea') !== null;
-    setIsHoveringClickable(isClickable);
-  };
+  const handleGlobalMouseMove = useCallback(
+    (e: React.MouseEvent) => {
+      if (!isFinePointer) return;
+      if (cursorRef.current) {
+        cursorRef.current.style.transform = `translate3d(${e.clientX}px, ${e.clientY}px, 0) translate(-50%, -50%)`;
+      }
 
-  const isLocked = (layoutId: string) => {
+      const target = e.target as HTMLElement | null;
+      const isClickable =
+        target?.closest('button, a, [role="button"], input, select, textarea') !== null;
+      if (isHoveringClickableRef.current !== isClickable) {
+        isHoveringClickableRef.current = isClickable;
+        setIsHoveringClickable(isClickable);
+      }
+    },
+    [isFinePointer]
+  );
+
+  const isLocked = (_layoutId: string) => {
     return false;
   };
 
@@ -213,16 +203,6 @@ export default function Photobooth() {
     }
   };
 
-  const toggleBgm = () => {
-    if (isBgmPlaying) {
-      stopLofiBgm();
-      setIsBgmPlaying(false);
-    } else {
-      startLofiBgm();
-      setIsBgmPlaying(true);
-    }
-  };
-
   // Camera & Capture Session State
   const [isCameraReady, setIsCameraReady] = useState(false);
   const [captureState, setCaptureState] = useState<CapturingState>('idle');
@@ -237,47 +217,19 @@ export default function Photobooth() {
   const activeTheme = CARD_THEMES[activeThemeId];
   const currentFilter = VISUAL_FILTERS[activeFilterId];
 
-  // Autoplay BGM with browser interaction fallbacks and preload specimen images
+  // Preload lobby specimen preview graphics to prevent hover lag
   useEffect(() => {
-    // 1. Preload lobby specimen preview graphics to prevent hover lag
     const preloadImages = [
       '/specimen1.jpg',
       '/specimen2.jpg',
       '/specimen3.jpg',
       '/specimen4.png',
-      '/specimen5.jpg'
+      '/specimen5.jpg',
     ];
-    preloadImages.forEach(src => {
+    preloadImages.forEach((src) => {
       const img = new Image();
       img.src = src;
     });
-
-    // 2. Play lo-fi background ambient stream
-    const triggerAutoplay = () => {
-      startLofiBgm();
-      setIsBgmPlaying(true);
-    };
-
-    // Try immediately
-    triggerAutoplay();
-
-    // Fallback: browser autoplay block bypasses on first window interaction
-    const handleInteraction = () => {
-      triggerAutoplay();
-      window.removeEventListener('click', handleInteraction);
-      window.removeEventListener('touchstart', handleInteraction);
-      window.removeEventListener('keydown', handleInteraction);
-    };
-
-    window.addEventListener('click', handleInteraction);
-    window.addEventListener('touchstart', handleInteraction);
-    window.addEventListener('keydown', handleInteraction);
-
-    return () => {
-      window.removeEventListener('click', handleInteraction);
-      window.removeEventListener('touchstart', handleInteraction);
-      window.removeEventListener('keydown', handleInteraction);
-    };
   }, []);
 
   // Initialize and keep Camera alive or stop based on navigation screen and video element mount
@@ -1622,16 +1574,18 @@ export default function Photobooth() {
         )}
       </AnimatePresence>
 
-      {/* Camera Viewfinder Autofocus Cursor (Only rendered on desktop devices with a physical mouse/trackpad) */}
+      {/* Camera Viewfinder Autofocus Cursor (DOM ref-driven, zero React re-renders on mousemove) */}
       {isFinePointer && (
-        <motion.div
+        <div
+          ref={cursorRef}
           style={{
             position: 'fixed',
-            left: globalMousePos.x,
-            top: globalMousePos.y,
+            left: 0,
+            top: 0,
+            transform: 'translate3d(-100px, -100px, 0) translate(-50%, -50%)',
             pointerEvents: 'none',
             zIndex: 99999,
-            transform: 'translate(-50%, -50%)',
+            willChange: 'transform',
           }}
           className="hidden md:flex items-center justify-center pointer-events-none"
         >
@@ -1658,7 +1612,7 @@ export default function Photobooth() {
               <path d="M 26 20 V 26 H 20" stroke={isHoveringClickable ? "#8e1616" : "#ffffff"} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
             </motion.g>
           </svg>
-        </motion.div>
+        </div>
       )}
 
     </div>
