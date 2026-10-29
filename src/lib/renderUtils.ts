@@ -482,15 +482,21 @@ export function applyLensEffects(
   return srcCanvas;
 }
 
+/**
+ * Renders the complete high-resolution photobooth strip canvas, supporting either a global
+ * burst frame index (`number`) or per-slot frame selection (`readonly number[]`, `FEAT-04`),
+ * plus optional custom/AI retro caption stamping (`FEAT-01`).
+ */
 export function renderStrip(
   photos: HTMLCanvasElement[][],
   layout: LayoutDef,
   grain: number,
   showDate: boolean,
-  frameIndex: number,
+  frameIndex: number | readonly number[],
   themeId: string = 'alabaster',
   filterId: FilterType = 'none',
-  lensEffect: LensEffectType = 'none'
+  lensEffect: LensEffectType = 'none',
+  customCaption?: string
 ): HTMLCanvasElement {
   const bgCanvas = document.createElement('canvas');
   bgCanvas.width = layout.width;
@@ -499,6 +505,15 @@ export function renderStrip(
   if (!ctx) return bgCanvas;
 
   const theme = CARD_THEMES[themeId] || CARD_THEMES.alabaster;
+
+  const resolveSlotFrame = (slotIdx: number): HTMLCanvasElement | undefined => {
+    const slotFrames = photos[slotIdx];
+    if (!slotFrames || slotFrames.length === 0) return undefined;
+    const targetIdx = Array.isArray(frameIndex)
+      ? (frameIndex[slotIdx] ?? 0)
+      : (frameIndex as number);
+    return slotFrames[targetIdx] ?? slotFrames[0];
+  };
 
   // Draw customized premium theme paper background
   ctx.fillStyle = theme.bgHex;
@@ -522,8 +537,8 @@ export function renderStrip(
 
   // Draw photos into computed slots
   layout.slots.forEach((slot, idx) => {
-    if (photos[idx] && photos[idx][frameIndex]) {
-      const img = photos[idx][frameIndex];
+    const img = resolveSlotFrame(idx);
+    if (img) {
       const imgRatio = img.width / img.height;
       const slotRatio = slot.w / slot.h;
 
@@ -610,7 +625,7 @@ export function renderStrip(
   // Apply Grain filter overlay — scoped to photo slots only (not the card frame)
   if (grain > 0) {
     layout.slots.forEach((slot, idx) => {
-      if (photos[idx] && photos[idx][frameIndex]) {
+      if (resolveSlotFrame(idx)) {
         ctx.save();
         ctx.beginPath();
         if (slot.rotation) {
@@ -672,13 +687,18 @@ export function renderStrip(
       }
     }
 
-    // Draw Brand signature on physical paper bottom margin, to the left of the QR
+    // Draw Brand signature and optional custom/AI retro caption on physical paper bottom margin
     const textX = qrX - 16;
     const textY = layout.datePos.y;
     ctx.font = 'bold 16px "Inter", sans-serif';
     ctx.fillStyle = theme.fontHex;
     ctx.textAlign = 'right';
     ctx.fillText(theme.label, textX, textY);
+
+    if (customCaption && customCaption.trim().length > 0) {
+      ctx.font = 'italic 14px "Georgia", serif';
+      ctx.fillText(`"${customCaption.trim()}"`, textX, textY - 22);
+    }
     ctx.textAlign = 'left'; // reset
 
   } catch (e) {
@@ -690,6 +710,10 @@ export function renderStrip(
     ctx.fillStyle = theme.fontHex;
     ctx.textAlign = 'right';
     ctx.fillText(theme.label, textX, textY);
+    if (customCaption && customCaption.trim().length > 0) {
+      ctx.font = 'italic 14px "Georgia", serif';
+      ctx.fillText(`"${customCaption.trim()}"`, textX, textY - 22);
+    }
     ctx.textAlign = 'left'; // reset
   }
 
