@@ -23,7 +23,12 @@ import {
   Loader2,
   Lock
 } from 'lucide-react';
-import { createCloudShare } from '../lib/api';
+import {
+  createCloudShare,
+  generateRetroCaption,
+  type CaptionMood,
+  type ShareTtlHours,
+} from '../lib/api';
 import qrcode from 'qrcode-generator';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
@@ -212,7 +217,13 @@ export default function Photobooth() {
   const [previewCanvasDataUrl, setPreviewCanvasDataUrl] = useState<string | null>(null);
   const [animatedFrameUrls, setAnimatedFrameUrls] = useState<string[]>([]);
   const [isExporting, setIsExporting] = useState(false);
-  const [selectedPhotoIndex, setSelectedPhotoIndex] = useState<number>(2); // for static frame review (defaults to middle burst frame)
+  const [selectedPhotoIndex, setSelectedPhotoIndex] = useState<number>(2);
+  const [slotFrameIndices, setSlotFrameIndices] = useState<number[]>([2, 2, 2, 2]);
+  const [activeSlotPickerIdx, setActiveSlotPickerIdx] = useState<'all' | number>('all');
+  const [retakeTargetSlot, setRetakeTargetSlot] = useState<number | null>(null);
+  const [customCaption, setCustomCaption] = useState<string>('');
+  const [isGeneratingCaption, setIsGeneratingCaption] = useState<boolean>(false);
+  const [shareTtlHours, setShareTtlHours] = useState<ShareTtlHours>(null);
   const sessionAbortRef = useRef<AbortController | null>(null);
 
   const activeLayout = LAYOUTS[activeLayoutId];
@@ -302,8 +313,8 @@ export default function Photobooth() {
     return canvas;
   }, [videoElement]);
 
-  // Run full photo session loop with AbortController cancellation support (FE-03)
-  const runSession = useCallback(async () => {
+  // Run full photo session loop or single-slot retake with AbortController cancellation support (FE-03, FEAT-04)
+  const runSession = useCallback(async (singleSlotOverride?: number | null) => {
     sessionAbortRef.current?.abort();
     const abortController = new AbortController();
     sessionAbortRef.current = abortController;
@@ -325,6 +336,46 @@ export default function Photobooth() {
         };
         signal.addEventListener('abort', onAbort, { once: true });
       });
+
+    const targetSlot =
+      typeof singleSlotOverride === 'number' ? singleSlotOverride : retakeTargetSlot;
+
+    if (targetSlot !== null && targetSlot >= 0 && capturedPhotos.length > 0) {
+      setCaptureState('countdown');
+      for (let i = photoDelay; i > 0; i--) {
+        if (signal.aborted) return;
+        setCountdownNum(i);
+        playTick();
+        const ok = await sleepAbortable(1000);
+        if (!ok) return;
+      }
+
+      if (signal.aborted) return;
+      setCaptureState('capturing');
+      setFlash(true);
+      spawnHearts();
+      playShutter();
+      setTimeout(() => setFlash(false), 80);
+
+      const frames: HTMLCanvasElement[] = [];
+      for (let f = 0; f < 5; f++) {
+        if (signal.aborted) return;
+        frames.push(captureFrame());
+        const ok = await sleepAbortable(100);
+        if (!ok) return;
+      }
+
+      if (signal.aborted) return;
+      setCapturedPhotos((prev) => {
+        const updated = [...prev];
+        updated[targetSlot] = frames;
+        return updated;
+      });
+      setRetakeTargetSlot(null);
+      setCaptureState('completed');
+      setScreen('review');
+      return;
+    }
 
     setCapturedPhotos([]);
     const totalShots = activeLayout.slots.length;
@@ -362,9 +413,33 @@ export default function Photobooth() {
     }
 
     if (signal.aborted) return;
+    setSlotFrameIndices(Array.from({ length: totalShots }, () => 2));
+    setActiveSlotPickerIdx('all');
     setCaptureState('completed');
     setScreen('review');
-  }, [activeLayout, photoDelay, spawnHearts, captureFrame]);
+  }, [activeLayout, photoDelay, spawnHearts, captureFrame, retakeTargetSlot, capturedPhotos.length]);
+
+  const handleRetakeSingleSlot = useCallback((slotIndex: number) => {
+    setRetakeTargetSlot(slotIndex);
+    setCaptureState('idle');
+    setScreen('active');
+  }, []);
+
+  const handleGenerateAiCaption = useCallback(
+    async (mood: CaptionMood) => {
+      playTick();
+      setIsGeneratingCaption(true);
+      try {
+        const res = await generateRetroCaption(mood, activeLayoutId);
+        setCustomCaption(res.caption);
+      } catch (err) {
+        console.error('Caption generation failed:', err);
+      } finally {
+        setIsGeneratingCaption(false);
+      }
+    },
+    [activeLayoutId]
+  );
 
   // Listen for Spacebar or Enter to start the photo session
   useEffect(() => {
@@ -385,7 +460,7 @@ export default function Photobooth() {
 
 
 
-  // Re-generate dynamic high-end preview strip on changes (pre-computing 5 burst frames when animated, FE-01)
+  // Re-generate dynamic high-end preview strip on changes (pre-computing 5 burst frames when animated, FE-01, FEAT-01, FEAT-04)
   useEffect(() => {
     if (screen !== 'review' || capturedPhotos.length === 0) return;
 
@@ -399,7 +474,8 @@ export default function Photobooth() {
           idx,
           activeThemeId,
           activeFilterId,
-          lensEffect
+          lensEffect,
+          customCaption
         ).toDataURL('image/jpeg', 0.92)
       );
       setAnimatedFrameUrls(urls);
@@ -410,10 +486,11 @@ export default function Photobooth() {
         activeLayout,
         grainIntensity,
         showDate,
-        selectedPhotoIndex,
+        slotFrameIndices,
         activeThemeId,
         activeFilterId,
-        lensEffect
+        lensEffect,
+        customCaption
       );
       setPreviewCanvasDataUrl(cvs.toDataURL('image/jpeg', 0.95));
     }
@@ -424,10 +501,12 @@ export default function Photobooth() {
     grainIntensity,
     showDate,
     selectedPhotoIndex,
+    slotFrameIndices,
     activeThemeId,
     activeFilterId,
     lensEffect,
     isAnimatedPreview,
+    customCaption,
   ]);
 
   // Animated "Live" Preview cycling effect over pre-computed DataURLs (zero canvas re-renders in interval, FE-01)
@@ -462,10 +541,11 @@ export default function Photobooth() {
           activeLayout,
           grainIntensity,
           showDate,
-          selectedPhotoIndex,
+          slotFrameIndices,
           activeThemeId,
           activeFilterId,
-          lensEffect
+          lensEffect,
+          customCaption
         );
         const mime = format === 'jpg' ? 'image/jpeg' : 'image/png';
 
@@ -488,7 +568,8 @@ export default function Photobooth() {
               i,
               activeThemeId,
               activeFilterId,
-              lensEffect
+              lensEffect,
+              customCaption
             )
           );
         }
@@ -577,7 +658,8 @@ export default function Photobooth() {
                   i,
                   activeThemeId,
                   activeFilterId,
-                  lensEffect
+                  lensEffect,
+                  customCaption
                 );
 
                 const c = document.createElement('canvas');
@@ -609,6 +691,8 @@ export default function Photobooth() {
             imageUrl: base64Image,
             layout: format === 'gif' ? 'animated' : activeLayoutId,
             format: format,
+            ...(customCaption.trim() ? { caption: customCaption.trim() } : {}),
+            ttlHours: shareTtlHours,
           });
 
           // Build sharing URL dynamically using window.location.origin to match the current domain
@@ -939,12 +1023,16 @@ export default function Photobooth() {
               {/* Sidebar Action Button */}
               <div className="mt-8 pt-6 border-t border-[#2a2a2a]">
                 <button
-                  onClick={runSession}
+                  onClick={() => void runSession()}
                   disabled={!isCameraReady || captureState === 'countdown' || captureState === 'capturing'}
                   className="w-full py-4.5 bg-white text-black hover:bg-stone-100 text-xs font-bold uppercase tracking-[0.25em] flex items-center justify-center gap-3 transition-colors disabled:opacity-40 select-none cursor-pointer"
                 >
                   <Camera className="w-4 h-4" />
-                  {captureState === 'idle' ? 'Start Session' : 'Capturing...'}
+                  {captureState === 'idle'
+                    ? retakeTargetSlot !== null
+                      ? `Retake Slot #${retakeTargetSlot + 1}`
+                      : 'Start Session'
+                    : 'Capturing...'}
                 </button>
               </div>
 
@@ -1141,32 +1229,181 @@ export default function Photobooth() {
                   </p>
                 </section>
 
-                {/* 2. Captured Burst Index Selection */}
+                {/* 2. Per-Slot Burst Frame Picker & Single-Slot Retake (FEAT-04) */}
                 <section className="pt-4 border-t border-[#222]">
                   <div className="flex justify-between items-center mb-2">
-                    <label className="text-[11px] uppercase tracking-widest text-[#888] font-semibold block">Select Burst Motion Frame</label>
+                    <label className="text-[11px] uppercase tracking-widest text-[#888] font-semibold block">
+                      Burst Frame & Slot Editor
+                    </label>
                     <span className="text-[10px] font-mono text-stone-500">
-                      {isAnimatedPreview ? "Auto-cycling" : `Frame #${selectedPhotoIndex + 1}`}
+                      {isAnimatedPreview
+                        ? 'Auto-cycling'
+                        : activeSlotPickerIdx === 'all'
+                          ? `All Slots: F${selectedPhotoIndex + 1}`
+                          : `Slot #${activeSlotPickerIdx + 1}: F${(slotFrameIndices[activeSlotPickerIdx] ?? 2) + 1}`}
                     </span>
                   </div>
-                  <div className={cn("grid grid-cols-5 gap-1.5 transition-opacity duration-200", isAnimatedPreview && "opacity-40 pointer-events-none")}>
-                    {[0, 1, 2, 3, 4].map((idx) => (
+
+                  {/* Slot selector tabs (All vs Slot 1..N) */}
+                  <div
+                    className={cn(
+                      'flex flex-wrap gap-1 mb-2 transition-opacity duration-200',
+                      isAnimatedPreview && 'opacity-40 pointer-events-none'
+                    )}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setActiveSlotPickerIdx('all')}
+                      className={cn(
+                        'px-2 py-1 text-[9px] font-mono uppercase border rounded-xs cursor-pointer transition-colors',
+                        activeSlotPickerIdx === 'all'
+                          ? 'border-white bg-white text-black font-bold'
+                          : 'border-[#222] text-stone-400 hover:text-white'
+                      )}
+                    >
+                      All Slots
+                    </button>
+                    {activeLayout.slots.map((_, sIdx) => (
                       <button
-                        key={idx}
-                        disabled={isAnimatedPreview}
-                        onClick={() => setSelectedPhotoIndex(idx)}
+                        key={sIdx}
+                        type="button"
+                        onClick={() => setActiveSlotPickerIdx(sIdx)}
                         className={cn(
-                          "py-2 text-[10px] font-mono border transition-all cursor-pointer rounded-xs",
-                          selectedPhotoIndex === idx
-                            ? "border-white bg-white text-black"
-                            : "border-[#222] text-stone-400 hover:text-white hover:border-[#333]"
+                          'px-2 py-1 text-[9px] font-mono uppercase border rounded-xs cursor-pointer transition-colors',
+                          activeSlotPickerIdx === sIdx
+                            ? 'border-white bg-white text-black font-bold'
+                            : 'border-[#222] text-stone-400 hover:text-white'
                         )}
                       >
-                        F{idx + 1}
+                        Slot {sIdx + 1}
                       </button>
                     ))}
                   </div>
-                  <p className="text-[9px] text-[#555] mt-2 font-serif italic">Every photo captures a 5-frame emotional burst, select the one that looks finest, or export all loop-animated as a GIF.</p>
+
+                  <div
+                    className={cn(
+                      'grid grid-cols-5 gap-1.5 transition-opacity duration-200',
+                      isAnimatedPreview && 'opacity-40 pointer-events-none'
+                    )}
+                  >
+                    {[0, 1, 2, 3, 4].map((idx) => {
+                      const isSelected =
+                        activeSlotPickerIdx === 'all'
+                          ? selectedPhotoIndex === idx
+                          : (slotFrameIndices[activeSlotPickerIdx] ?? 2) === idx;
+                      return (
+                        <button
+                          key={idx}
+                          disabled={isAnimatedPreview}
+                          onClick={() => {
+                            if (activeSlotPickerIdx === 'all') {
+                              setSelectedPhotoIndex(idx);
+                              setSlotFrameIndices(
+                                activeLayout.slots.map(() => idx)
+                              );
+                            } else {
+                              setSlotFrameIndices((prev) => {
+                                const next = [...prev];
+                                next[activeSlotPickerIdx] = idx;
+                                return next;
+                              });
+                            }
+                          }}
+                          className={cn(
+                            'py-2 text-[10px] font-mono border transition-all cursor-pointer rounded-xs',
+                            isSelected
+                              ? 'border-white bg-white text-black'
+                              : 'border-[#222] text-stone-400 hover:text-white hover:border-[#333]'
+                          )}
+                        >
+                          F{idx + 1}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {typeof activeSlotPickerIdx === 'number' && (
+                    <button
+                      type="button"
+                      onClick={() => handleRetakeSingleSlot(activeSlotPickerIdx)}
+                      className="w-full mt-2 py-1.5 border border-rose-500/40 hover:border-rose-500 text-rose-400 hover:text-rose-300 text-[9px] font-mono uppercase tracking-wider flex items-center justify-center gap-1.5 transition-colors cursor-pointer rounded-xs"
+                    >
+                      <RefreshCw className="w-3 h-3" />
+                      Retake Only Slot #{activeSlotPickerIdx + 1}
+                    </button>
+                  )}
+
+                  <p className="text-[9px] text-[#555] mt-2 font-serif italic">
+                    Pick the best burst frame for all slots or fine-tune each individual slot.
+                  </p>
+                </section>
+
+                {/* 2b. AI Retro Caption & Cloud Link TTL (FEAT-01, FEAT-05) */}
+                <section className="pt-4 border-t border-[#222] space-y-3">
+                  <div className="flex justify-between items-center">
+                    <label className="text-[11px] uppercase tracking-widest text-[#888] font-semibold block">
+                      Retro Strip Caption
+                    </label>
+                    <span className="text-[9px] font-mono text-stone-500">
+                      {isGeneratingCaption ? 'Writing...' : 'AI / Custom'}
+                    </span>
+                  </div>
+                  <input
+                    type="text"
+                    maxLength={80}
+                    value={customCaption}
+                    onChange={(e) => setCustomCaption(e.target.value)}
+                    placeholder="Type a memory or tap AI mood below..."
+                    className="w-full bg-[#171717] border border-[#222] text-[11px] font-mono py-2 px-2.5 text-white placeholder:text-stone-600 focus:outline-none focus:border-stone-500 rounded-xs"
+                  />
+                  <div className="grid grid-cols-4 gap-1">
+                    {(['nostalgic', 'playful', 'romantic', 'minimal'] as const).map(
+                      (mood) => (
+                        <button
+                          key={mood}
+                          type="button"
+                          disabled={isGeneratingCaption}
+                          onClick={() => void handleGenerateAiCaption(mood)}
+                          className="py-1.5 px-1 border border-[#222] hover:border-stone-500 bg-[#141414] text-[9px] font-mono uppercase text-stone-300 hover:text-white transition-colors rounded-xs cursor-pointer truncate"
+                        >
+                          {mood}
+                        </button>
+                      )
+                    )}
+                  </div>
+
+                  <div className="pt-2 border-t border-white/5">
+                    <div className="flex justify-between items-center mb-1.5">
+                      <span className="text-[10px] text-stone-400">Cloud Share Expiry</span>
+                      <span className="text-[9px] font-mono text-stone-500">
+                        {shareTtlHours === null ? 'Permanent' : `${shareTtlHours}h TTL`}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-4 gap-1">
+                      {(
+                        [
+                          { label: 'Forever', val: null },
+                          { label: '1h', val: 1 },
+                          { label: '24h', val: 24 },
+                          { label: '7d', val: 168 },
+                        ] as const
+                      ).map((opt) => (
+                        <button
+                          key={opt.label}
+                          type="button"
+                          onClick={() => setShareTtlHours(opt.val)}
+                          className={cn(
+                            'py-1 text-[9px] font-mono uppercase border rounded-xs cursor-pointer transition-colors',
+                            shareTtlHours === opt.val
+                              ? 'border-white bg-white text-black font-bold'
+                              : 'border-[#222] text-stone-400 hover:text-white'
+                          )}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 </section>
 
                 {/* 3. Dynamic Realtime Filters adjustment */}
