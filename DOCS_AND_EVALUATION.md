@@ -94,3 +94,4 @@ flowchart LR
 | **Category 4 (Frontend Studio UX & Sharing)** | `S.O.L` | **4.1** | `9a6db5b` | `feat(api): add ephemeral session token handshake, AI retro caption client, TTL share support, and per-slot/caption strip rendering` |
 | **Category 4 (Frontend Studio UX & Sharing)** | `S.O.L` | **4.2** | `018885a` | `feat(studio): add single-slot retake, per-slot burst frame picker, AI retro caption generator, and share expiration TTL selector` |
 | **Category 4 (Frontend Studio UX & Sharing)** | `S.O.L` | **4.3** | *(HEAD)* | `feat(share): add native Web Share API, expiration UI, and complete architectural documentation` |
+
