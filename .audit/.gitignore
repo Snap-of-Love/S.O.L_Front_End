@@ -1,0 +1,4 @@
+# Keep generated diagnostic data outside Tailwind's automatic source scan.
+# The accompanying archive preserves the reviewable evidence for versioning.
+*
+!.gitignore
