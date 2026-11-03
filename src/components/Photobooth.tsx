@@ -247,6 +247,7 @@ export default function Photobooth() {
   const [drawing,setDrawing] = useState(false), [ink,setInk] = useState('#a92b35');
   const [featureError,setFeatureError] = useState(''), [featureMessage,setFeatureMessage] = useState('');
   const [cloudShare,setCloudShare] = useState<CreatedShare|null>(null);
+  const manageInput = useRef<HTMLInputElement>(null);
   const decorationCommit = useRef<(layers:Decoration[])=>void>(()=>{});
   const operation = useRef<{fingerprint:string;key:string}|null>(null);
   const activeCustom = customTemplate?.id === activeLayoutId ? customTemplate : null;
@@ -259,7 +260,7 @@ export default function Photobooth() {
   const draftPhotos = useMemo(()=>capturedPhotos.map((frames,i)=>({id:`photo-${i}`,name:`Photo ${i+1}`,frames:frames.map(canvas=>canvas.toDataURL('image/jpeg',.88))})),[capturedPhotos]);
   const draftProject = useMemo<StudioProject>(()=>({photos:draftPhotos,layoutId:activeLayoutId,themeId:activeThemeId,filterId:activeFilterId,lens:lensEffect,grain:grainIntensity,showDate,caption:customCaption,frames:slotFrameIndices,crops,decorations,customTemplate}),[draftPhotos,activeLayoutId,activeThemeId,activeFilterId,lensEffect,grainIntensity,showDate,customCaption,slotFrameIndices,crops,decorations,customTemplate]);
   const restoreProject = useCallback((project:StudioProject)=>{
-    void photoCanvases(project.photos).then(photos=>{sessionAbortRef.current?.abort();setCapturedPhotos(photos);setActiveLayoutId(project.layoutId);setActiveThemeId(project.themeId);setActiveFilterId(project.filterId);setLensEffect(project.lens);setGrainIntensity(project.grain);setShowDate(project.showDate);setCustomCaption(project.caption);setSlotFrameIndices(project.frames);setCrops(project.crops);setDecorations(project.decorations);setCustomTemplate(project.customTemplate);setScreen('review');setFeatureMessage('Local session restored.');}).catch(e=>setFeatureError(e.message));
+    void photoCanvases(project.photos).then(photos=>{sessionAbortRef.current?.abort();setCapturedPhotos(photos);setActiveLayoutId(project.layoutId);setActiveThemeId(project.themeId);setActiveFilterId(project.filterId);setLensEffect(project.lens);setGrainIntensity(project.grain);setShowDate(project.showDate);setCustomCaption(project.caption);setSlotFrameIndices(project.frames);setSelectedPhotoIndex(project.frames[0]??0);setActiveSlotPickerIdx('all');setCrops(project.crops);setDecorations(project.decorations);setCustomTemplate(project.customTemplate);setScreen('review');setFeatureMessage('Local session restored.');}).catch(e=>setFeatureError(e.message));
   },[]);
   const draft = useDraft(draftProject,restoreProject);
   async function imported(photos:StudioPhoto[]){try{const canvases=await photoCanvases(photos);sessionAbortRef.current?.abort();setCapturedPhotos(canvases);setActiveLayoutId(customTemplate?.slots.length===photos.length?customTemplate.id:layoutForCount(photos.length).id);setSlotFrameIndices(photos.map(()=>0));setSelectedPhotoIndex(0);setCrops(photos.map(defaultCrop));setDecorations([]);setIsAnimatedPreview(false);setCaptureState('completed');setScreen('review');setFeatureError('');}catch(e){setFeatureError((e as Error).message);}}
@@ -489,7 +490,7 @@ export default function Photobooth() {
       if (screen === 'active' && isCameraReady && captureState === 'idle') {
         if (e.key === ' ' || e.key === 'Enter') {
           e.preventDefault();
-          runSession();
+          void runSession().catch(e=>{setCaptureState('idle');setFeatureError(e instanceof Error?e.message:'Capture failed. Please retry or import photos.');});
         }
       }
     };
@@ -676,7 +677,7 @@ export default function Photobooth() {
   }, [showAdOverlay, adCountdown]);
 
   const startNewSession = () => {
-    if(!draft.ready)return;
+    if(!draft.ready){setFeatureError('Open Import / recover session to restore or discard the saved draft first.');return;}
     sessionAbortRef.current?.abort();
     setCrops([]);setDecorations([]);setFeatureError('');
     setIsFlashing(true);
@@ -1436,7 +1437,7 @@ export default function Photobooth() {
                   </button>
                 </div>
 
-                <div className="sol-additions"><p>Cloud sharing uploads a JPEG snapshot. Anyone with its link can view it. Local exports stay on your device.</p><button type="button" className="button" disabled={isUploadingCloud||isExporting} onClick={()=>void shareCurrent()}>Create cloud link / QR</button></div>
+                <div className="sol-additions"><p>Cloud sharing uploads a JPEG snapshot. Anyone with its link can view it. Local exports stay on your device.</p><button type="button" className="button" disabled={isUploadingCloud||isExporting} onClick={()=>void shareCurrent()}>Create cloud link / QR</button><button type="button" className="text-button" onClick={()=>manageInput.current?.click()}>Manage previous cloud link</button><input ref={manageInput} type="file" accept="application/json,.json" hidden onChange={async event=>{const file=event.target.files?.[0];event.target.value='';if(!file)return;try{if(file.size>4096)throw new Error('Choose a S.O.L management JSON file.');const value=JSON.parse(await file.text());if(value.version!==1||!/^([a-f0-9]{32})$/.test(value.id)||typeof value.ownerToken!=='string'||!/^[a-zA-Z0-9_-]{43}$/.test(value.ownerToken))throw new Error('Invalid cloud management file.');setCloudShare({id:value.id,ownerToken:value.ownerToken});setShareUrl(socialShareUrl(value.id));setShowThankYouPopup(true);}catch(e){setFeatureError((e as Error).message);}}}/></div>
                 <div className="grid grid-cols-2 gap-2 mt-4">
                   <button
                     onClick={startNewSession}
