@@ -1,3 +1,4 @@
+import { renderDecorations, type Decoration } from '../studio/decorations.ts';
 import { drawCroppedPhoto, type PhotoCrop } from '../studio/crop.ts';
 import { format } from 'date-fns';
 import qrcode from 'qrcode-generator';
@@ -498,7 +499,7 @@ export function renderStrip(
   filterId: FilterType = 'none',
   lensEffect: LensEffectType = 'none',
   customCaption?: string,
-  edits: { crops?: readonly PhotoCrop[] } = {}
+  edits: { crops?: readonly PhotoCrop[]; decorations?: readonly Decoration[] } = {}
 ): HTMLCanvasElement {
   const bgCanvas = document.createElement('canvas');
   bgCanvas.width = layout.width;
@@ -702,5 +703,6 @@ export function renderStrip(
     ctx.textAlign = 'left'; // reset
   }
 
+  renderDecorations(ctx, edits.decorations ?? [], layout.width, layout.height);
   return bgCanvas;
 }

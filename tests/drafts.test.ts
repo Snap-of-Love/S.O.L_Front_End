@@ -19,3 +19,8 @@ test('per-photo crops survive recovery and invalid transforms are rejected', asy
   assert.deepEqual(parseDraft({ version: 1, savedAt: Date.now(), project }).project.crops, project.crops);
   project.crops[0]!.zoom = 10; assert.throws(() => parseDraft({ version: 1, savedAt: Date.now(), project }), /crop/);
 });
+
+test('decoration layers restore without losing stroke geometry', () => {
+  const project = emptyProject(); project.decorations = [{id:'line',kind:'doodle',color:'#a92b35',width:.01,points:[{x:.1,y:.2},{x:.4,y:.9}]}];
+  assert.deepEqual(parseDraft({version:1,savedAt:Date.now(),project}).project.decorations,project.decorations);
+});

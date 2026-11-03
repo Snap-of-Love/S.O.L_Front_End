@@ -5,13 +5,13 @@ import { LAYOUTS } from './layouts';
 import { renderStrip } from '../lib/renderUtils';
 export function compose(canvases: HTMLCanvasElement[][], project: StudioProject, frame?: number) {
   const layout = LAYOUTS[project.layoutId] ?? LAYOUTS['1x4']!;
-  return renderStrip(canvases, layout, project.grain, project.showDate, frame ?? project.frames, project.themeId, project.filterId, project.lens, project.caption, { crops: project.crops });
+  return renderStrip(canvases, layout, project.grain, project.showDate, frame ?? project.frames, project.themeId, project.filterId, project.lens, project.caption, { crops: project.crops, decorations: project.decorations });
 }
 export function usePreview(project: StudioProject) {
   const [canvases, setCanvases] = useState<HTMLCanvasElement[][]>([]), [url, setUrl] = useState(''), [error, setError] = useState(''), [preparing, setPreparing] = useState(false);
   useEffect(() => {
     const controller = new AbortController(); setCanvases([]); setUrl(''); setError('');
-    if (!project.photos.length) return () => controller.abort();
+    if (!project.photos.length) { setPreparing(false); return () => controller.abort(); }
     setPreparing(true);
     void photoCanvases(project.photos, controller.signal).then(result => { if (!controller.signal.aborted) setCanvases(result); }).catch(reason => { if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : 'Preview failed.'); }).finally(() => { if (!controller.signal.aborted) setPreparing(false); });
     return () => controller.abort();
