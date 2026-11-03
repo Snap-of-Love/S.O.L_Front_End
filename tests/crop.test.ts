@@ -17,3 +17,12 @@ test('invalid and nonfinite crops cannot enter renderer state', () => {
   assert.equal(validCrop({ ...defaultCrop(), x: 2 }), false);
   assert.throws(() => cropTransform(0, 100, 100, 100));
 });
+
+test('cover bounds hold across all rotations and extreme alignments', () => {
+  for (const rotation of [0,90,180,270] as const) for (const x of [-1,0,1]) for (const y of [-1,0,1]) {
+    const c = { x, y, rotation, zoom: 3, flip: true }, t = cropTransform(1920,1080,440,600,c);
+    const w = (rotation % 180 ? 1080 : 1920) * t.scale, h = (rotation % 180 ? 1920 : 1080) * t.scale;
+    assert.ok(w / 2 - Math.abs(t.offsetX) >= 220 - 1e-8);
+    assert.ok(h / 2 - Math.abs(t.offsetY) >= 300 - 1e-8);
+  }
+});
