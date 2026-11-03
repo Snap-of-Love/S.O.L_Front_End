@@ -6,21 +6,23 @@ import { playShutter } from '../lib/audioUtils';
 export function CameraPanel({ count, onComplete, onCancel }: { count: number; onComplete: (photos: StudioPhoto[]) => void; onCancel: () => void }) {
   const video = useRef<HTMLVideoElement>(null), stream = useRef<MediaStream | null>(null), active = useRef(true), job = useRef<AbortController | null>(null);
   const [ready, setReady] = useState(false), [error, setError] = useState(''), [busy, setBusy] = useState(false), [delay, setDelay] = useState(3), [countdown, setCountdown] = useState<number | null>(null), [pose, setPose] = useState(0), [sound, setSound] = useState(false);
+  const generation = useRef(0);
   async function setup() {
+    const attempt = ++generation.current;
     setError(''); setReady(false); stream.current?.getTracks().forEach(track => track.stop());
     try {
       if (!navigator.mediaDevices?.getUserMedia) throw new Error('Camera access needs a supported browser and a secure HTTPS connection. You can import photos instead.');
       const media = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 960 }, height: { ideal: 720 } }, audio: false });
-      if (!active.current) { media.getTracks().forEach(track => track.stop()); return; }
+      if (!active.current || attempt !== generation.current) { media.getTracks().forEach(track => track.stop()); return; }
       stream.current = media;
-      if (video.current) { video.current.srcObject = media; await video.current.play(); if (active.current) setReady(true); }
+      if (video.current) { video.current.srcObject = media; await video.current.play(); if (active.current && attempt === generation.current) setReady(true); }
     } catch (reason) {
-      if (!active.current) return;
+      if (!active.current || attempt !== generation.current) return;
       const name = reason instanceof Error ? reason.name : '';
       setError(name === 'NotAllowedError' ? 'Camera access was blocked. Allow the camera in your browser’s site settings, then choose Retry camera. You can also import photos.' : name === 'NotFoundError' ? 'No camera was found. Connect one or import photos instead.' : name === 'NotReadableError' ? 'Another app may be using the camera. Close it, then retry.' : reason instanceof Error && name === 'Error' ? reason.message : 'The camera could not start. Check permissions or import photos instead.');
     }
   }
-  useEffect(() => { active.current = true; void setup(); return () => { active.current = false; job.current?.abort(); stream.current?.getTracks().forEach(track => track.stop()); }; }, []);
+  useEffect(() => { active.current = true; void setup(); return () => { active.current = false; generation.current++; job.current?.abort(); stream.current?.getTracks().forEach(track => track.stop()); }; }, []);
   async function capture() {
     if (!video.current || !ready || busy) return;
     const controller = new AbortController(); job.current = controller; setBusy(true);

@@ -4,11 +4,12 @@ export function openStudioDatabase(): Promise<IDBDatabase> {
   if (!globalThis.indexedDB) return Promise.reject(new Error('Local draft storage is unavailable in this browser.'));
   opening ??= new Promise((resolve, reject) => {
     const request = indexedDB.open('sol-studio-v1', 1);
-    const timer = setTimeout(() => reject(new Error('Local storage is busy in another tab. Close that tab and retry.')), 8000);
+    let settled = false;
+    const timer = setTimeout(() => { settled = true; opening = null; reject(new Error('Local storage is busy in another tab. Close that tab and retry.')); }, 8000);
     request.onupgradeneeded = () => { for (const name of ['drafts', 'templates']) if (!request.result.objectStoreNames.contains(name)) request.result.createObjectStore(name); };
-    request.onerror = () => { clearTimeout(timer); opening = null; reject(new Error('Unable to open local storage.')); };
-    request.onblocked = () => { clearTimeout(timer); opening = null; reject(new Error('Close another S.O.L tab to use local storage.')); };
-    request.onsuccess = () => { clearTimeout(timer); const db = request.result; db.onversionchange = () => { db.close(); opening = null; }; resolve(db); };
+    request.onerror = () => { settled = true; clearTimeout(timer); opening = null; reject(new Error('Unable to open local storage.')); };
+    request.onblocked = () => { settled = true; clearTimeout(timer); opening = null; reject(new Error('Close another S.O.L tab to use local storage.')); };
+    request.onsuccess = () => { clearTimeout(timer); const db = request.result; if (settled) { db.close(); return; } settled = true; db.onversionchange = () => { db.close(); opening = null; }; resolve(db); };
   });
   return opening;
 }
