@@ -6,6 +6,8 @@ The application has a reasonable small-product structure, but the current securi
 
 This is a review and test deliverable. Application source, dependency versions, security rules, and deployments were not changed.
 
+The subsequent [frontend/backend integration follow-up](INTEGRATION_AUDIT.md) adds real local HTTP checks and links the backend's dedicated audit. It confirms additional timestamp, webhook, amount, configuration and malformed-request behavior, including a crash reproduced in a disposable server process.
+
 ## Scope and evidence
 
 - Frontend: this checkout at `a1c9bc286b8502a1a0a1f040af5cc66c2a53a2d3`.
