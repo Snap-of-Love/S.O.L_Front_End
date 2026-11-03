@@ -8,3 +8,8 @@ test('templates enforce bounded paper, contained nonoverlapping slots and safe a
 test('Figma guide preserves exact logical paper and slot dimensions without markup from names',()=>{
  const t=starterTemplate(); t.name='<script>alert(1)</script>'; const svg=figmaGuide(t); assert.match(svg,/width="600" height="1800"/); assert.match(svg,/PHOTO_1_x40_y50_w520_h350/); assert.doesNotMatch(svg,/<script/);
 });
+
+test('active template remains in recovered drafts without mutating source state',async()=>{
+ const {emptyProject,parseDraft}=await import('../src/studio/project.ts');const project=emptyProject();project.customTemplate=starterTemplate();project.layoutId=project.customTemplate.id;const original=project.customTemplate;
+ const restored=parseDraft({version:1,savedAt:Date.now(),project});assert.deepEqual(restored.project.customTemplate,original);assert.equal(project.customTemplate,original);
+});

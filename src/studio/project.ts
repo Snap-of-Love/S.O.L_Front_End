@@ -22,7 +22,7 @@ export const DRAFT_RETENTION_MS = 7 * 86400000;
 export function emptyProject(): StudioProject { return { photos: [], layoutId: '1x4', themeId: 'alabaster', filterId: 'none', lens: 'none', grain: 12, showDate: true, caption: '', frames: [], crops: [], decorations: [], customTemplate: null }; }
 export function parseDraft(value: unknown, now = Date.now()): DraftRecord {
   if (!value || typeof value !== 'object') throw new Error('Draft is damaged.');
-  const record = value as DraftRecord, project = record.project;
+  const record = structuredClone(value) as DraftRecord, project = record.project;
   if (record.version !== 1 || !Number.isFinite(record.savedAt) || record.savedAt > now + 86400000 || !project || typeof project !== 'object') throw new Error('This draft version cannot be restored.');
   if (!Array.isArray(project.photos) || project.photos.length > 8 || !Array.isArray(project.frames) || project.frames.some(x => !Number.isInteger(x) || x < 0 || x > 4)) throw new Error('Draft photos are damaged.');
   project.customTemplate ??= null;

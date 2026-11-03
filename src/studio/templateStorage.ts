@@ -1,6 +1,6 @@
-import { readLocal, writeLocal } from './storage';
-import { parseTemplate, type StudioTemplate } from './templates';
-import { imageKind, loadImage } from './images';
+import { readLocal, openStudioDatabase } from './storage.ts';
+import { parseTemplate, type StudioTemplate } from './templates.ts';
+import { imageKind, loadImage } from './images.ts';
 export function validateOverlayHeader(bytes: Uint8Array, template: StudioTemplate) {
   if (imageKind(bytes) !== 'png' || bytes.length < 24) throw new Error('Export your frame artwork as PNG.');
   const view = new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength), width=view.getUint32(16),height=view.getUint32(20);
@@ -25,10 +25,15 @@ export async function loadTemplates(): Promise<StudioTemplate[]> {
   const values=await readLocal<unknown>('templates','catalog'); if(values===undefined)return [];
   if(!Array.isArray(values)||values.length>10)throw new Error('The saved template library is damaged.'); return values.map(parseTemplate);
 }
+async function updateCatalog(change: (list:StudioTemplate[])=>StudioTemplate[]) {
+  const db=await openStudioDatabase();return new Promise<StudioTemplate[]>((resolve,reject)=>{
+    const tx=db.transaction('templates','readwrite'),store=tx.objectStore('templates'),request=store.get('catalog');let next:StudioTemplate[]=[],failure:unknown;
+    request.onsuccess=()=>{try{const previous=request.result;if(previous!==undefined&&(!Array.isArray(previous)||previous.length>10))throw new Error('The saved template library is damaged.');next=change((previous??[]).map(parseTemplate));if(next.length>10||JSON.stringify(next).length>24_000_000)throw new Error('Keep up to 10 templates and 24 MB of artwork. Export then remove an older template first.');store.put(next,'catalog');}catch(e){failure=e;tx.abort();}};
+    tx.oncomplete=()=>resolve(next);tx.onerror=tx.onabort=()=>reject(failure??new Error('Template could not be saved. Export JSON as a backup; local storage may be full.'));
+  });
+}
 export async function saveTemplate(template: StudioTemplate) {
   const checked=parseTemplate(template);if(checked.overlay)await validateOverlay(checked.overlay,checked);
-  const list=await loadTemplates(),next=[...list.filter(t=>t.id!==checked.id),checked];
-  if(next.length>10||JSON.stringify(next).length>24_000_000)throw new Error('Keep up to 10 templates and 24 MB of artwork. Export then remove an older template first.');
-  await writeLocal('templates','catalog',next);return next;
+  return updateCatalog(list=>[...list.filter(t=>t.id!==checked.id),checked]);
 }
-export async function removeTemplate(id: string) {const next=(await loadTemplates()).filter(t=>t.id!==id);await writeLocal('templates','catalog',next);return next;}
+export async function removeTemplate(id: string) {return updateCatalog(list=>list.filter(t=>t.id!==id));}
