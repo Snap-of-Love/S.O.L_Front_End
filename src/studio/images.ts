@@ -18,6 +18,15 @@ export async function validatePhoto(file: File): Promise<{ kind: string; bytes: 
     const view = new DataView(bytes.buffer), width = view.getUint32(16), height = view.getUint32(20);
     if (!width || !height || width * height > MAX_IMAGE_PIXELS) throw new Error(`${file.name}: use a photo below 36 megapixels.`);
   }
+  if (kind === 'webp' && bytes.length >= 30) {
+    const chunk = String.fromCharCode(...bytes.slice(12, 16));
+    const u24 = (offset: number) => bytes[offset]! + (bytes[offset + 1]! << 8) + (bytes[offset + 2]! << 16);
+    let width = 0, height = 0;
+    if (chunk === 'VP8X') { width = 1 + u24(24); height = 1 + u24(27); }
+    else if (chunk === 'VP8L' && bytes[20] === 47) { const bits = new DataView(bytes.buffer).getUint32(21, true); width = (bits & 16383) + 1; height = ((bits >>> 14) & 16383) + 1; }
+    else if (chunk === 'VP8 ') { const view = new DataView(bytes.buffer); width = view.getUint16(26, true) & 16383; height = view.getUint16(28, true) & 16383; }
+    if (!width || !height || width * height > MAX_IMAGE_PIXELS) throw new Error(`${file.name}: use a valid photo below 36 megapixels.`);
+  }
   if (kind === 'jpeg') {
     let offset = 2, found = false;
     while (offset + 8 < bytes.length) {

@@ -24,3 +24,9 @@ test('imports reject empty and excessive batches before decoding', async () => {
   await assert.rejects(importPhotos([]), /one and eight/);
   await assert.rejects(importPhotos(Array.from({ length: 9 }, () => new File(['x'], 'x.png'))), /one and eight/);
 });
+
+test('mislabeled images and damaged JPEGs fail with recoverable guidance', async () => {
+  const png = new Uint8Array(24); png.set([137,80,78,71,13,10,26,10]); new DataView(png.buffer).setUint32(16, 1); new DataView(png.buffer).setUint32(20, 1);
+  await assert.rejects(validatePhoto(new File([png], 'wrong.jpg', { type: 'image/jpeg' })), /do not match/);
+  await assert.rejects(validatePhoto(new File([new Uint8Array([255,216,255,0])], 'broken.jpg', { type: 'image/jpeg' })), /damaged/);
+});
