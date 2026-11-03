@@ -1,274 +1,81 @@
-/**
- * Decoupled API client for communicating with the standalone `S.O.L_Back_End` service.
- * Supports ephemeral HMAC-SHA256 session tokens (`POST /v1/sessions`), `Idempotency-Key`
- * deduplication, AI retro captions (`POST /v1/shares/caption`), configurable share TTLs
- * (`FEAT-05`), and RFC 7807 Problem Details error handling.
- */
-
-import { doc, getDoc, setDoc, collection } from 'firebase/firestore';
-import { db } from './firebase';
-
 export type ShareFormat = 'jpg' | 'png' | 'gif';
 export type ShareTtlHours = 1 | 24 | 168 | null;
 export type CaptionMood = 'nostalgic' | 'playful' | 'romantic' | 'minimal';
-
-export interface ShareData {
-  readonly id?: string;
-  readonly imageUrl: string;
-  readonly layout: string;
-  readonly format?: ShareFormat;
-  readonly caption?: string;
-  readonly createdAt: unknown;
-  readonly expiresAt?: string | null;
-  readonly isExpired?: boolean;
+export interface ShareData { id?: string; imageUrl: string; layout: string; format?: ShareFormat; caption?: string; createdAt: unknown; expiresAt?: string | null; isExpired?: boolean }
+export interface CreateSharePayload { imageUrl: string; layout: string; format: ShareFormat; caption?: string; ttlHours?: ShareTtlHours }
+export interface CaptionResult { caption: string; dateStamp: string; mood: CaptionMood; source: 'gemini' | 'curated'; offlineFallback?: boolean }
+export interface CreatedShare { id: string; expiresAt?: string | null; ownerToken: string }
+export class ApiError extends Error {
+  status: number; requestId: string | undefined; errors: { field: string; message: string }[];
+  constructor(status: number, message: string, requestId?: string, errors: { field: string; message: string }[] = []) { super(message); this.status = status; this.requestId = requestId; this.errors = errors; }
 }
-
-export interface CreateSharePayload {
-  readonly imageUrl: string;
-  readonly layout: string;
-  readonly format: ShareFormat;
-  readonly caption?: string;
-  readonly ttlHours?: ShareTtlHours;
+const base = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim().replace(/\/+$/, '') ?? '';
+function endpoint(path: string) {
+  if (base && !base.startsWith('/')) {
+    const url = new URL(base);
+    if (url.username || url.password || url.search || url.hash || !['http:', 'https:'].includes(url.protocol) || (url.protocol === 'http:' && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))) throw new ApiError(503, 'Cloud sharing is not configured securely. You can still download your photos.');
+  }
+  if (base.startsWith('//')) throw new ApiError(503, 'Invalid cloud sharing configuration.');
+  return `${base}${path}`;
 }
-
-export interface CaptionResult {
-  readonly caption: string;
-  readonly dateStamp: string;
-  readonly mood: CaptionMood;
-  readonly source: 'gemini' | 'curated';
-}
-
-const API_BASE_URL: string =
-  (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/+$/, '') ?? '';
-const API_KEY: string =
-  (import.meta.env.VITE_API_KEY as string | undefined)?.trim() ?? '';
-
-let cachedSessionToken: { token: string; expiresAtMs: number } | null = null;
-
-const LOCAL_CURATED_CAPTIONS: Record<CaptionMood, readonly string[]> = {
-  nostalgic: [
-    'Golden hour on 35mm — held in amber forever.',
-    'Silver halide memories from a slower afternoon.',
-    'Four frames of yesterday, still warm in our hands.',
-  ],
-  playful: [
-    'Caught mid-laugh before the flash went off!',
-    'Too cool for one frame, needed all four.',
-    'No retakes, pure analog mischief.',
-  ],
-  romantic: [
-    'Every frame with you feels like my favorite film.',
-    'Two hearts, one booth, four little eternities.',
-    'Soft focus on the world, sharp focus on us.',
-  ],
-  minimal: [
-    'S.O.L // STUDIO ARCHIVE',
-    '35MM — STILL FRAME',
-    'QUIET LIGHT // NO. 04',
-  ],
-};
-let localCaptionCursor = 0;
-
-/**
- * Obtains or reuses a short-lived HMAC-SHA256 bearer session token (`POST /v1/sessions`, `BE-01`).
- *
- * @returns {Promise<string | null>} Bearer token or null if unavailable
- */
-async function resolveAuthToken(): Promise<string | null> {
-  if (API_KEY.length > 0) {
-    return API_KEY;
-  }
-  if (API_BASE_URL.length === 0) {
-    return null;
-  }
-  if (cachedSessionToken && cachedSessionToken.expiresAtMs - 30_000 > Date.now()) {
-    return cachedSessionToken.token;
-  }
+let cached: { token: string; expiresAt: string } | null = null;
+let pending: Promise<string> | null = null;
+try { const raw: unknown = JSON.parse(sessionStorage.getItem('sol_session_v2') ?? 'null'); if (raw && typeof raw === 'object' && 'token' in raw && typeof raw.token === 'string' && 'expiresAt' in raw && typeof raw.expiresAt === 'string') cached = { token: raw.token, expiresAt: raw.expiresAt }; } catch { /* Storage is optional. */ }
+async function request(path: string, init: RequestInit = {}, signal?: AbortSignal): Promise<unknown> {
+  const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 12000);
+  const abort = () => controller.abort(); signal?.addEventListener('abort', abort, { once: true }); if (signal?.aborted) controller.abort();
   try {
-    const res = await fetch(`${API_BASE_URL}/v1/sessions`, {
-      method: 'POST',
-      headers: { Accept: 'application/json' },
-    });
-    if (res.ok) {
-      const data = (await res.json()) as { token?: string; expiresAt?: string };
-      if (data.token && data.expiresAt) {
-        cachedSessionToken = {
-          token: data.token,
-          expiresAtMs: Date.parse(data.expiresAt),
-        };
-        return data.token;
-      }
-    }
-  } catch {
-    // Proceed without session token if backend does not require auth in local dev
-  }
-  return null;
-}
-
-/**
- * Builds standard HTTP headers with optional authentication and `Idempotency-Key`.
- *
- * @param {boolean} hasBody - Whether the request includes a JSON body
- * @param {string | null} token - Optional bearer/API token
- * @param {string} [idempotencyKey] - Optional `Idempotency-Key` for safe retries
- * @returns {Record<string, string>} Request headers map
- */
-function buildHeaders(
-  hasBody: boolean,
-  token: string | null,
-  idempotencyKey?: string
-): Record<string, string> {
-  const headers: Record<string, string> = {
-    Accept: 'application/json, application/problem+json',
-  };
-  if (hasBody) {
-    headers['Content-Type'] = 'application/json';
-  }
-  if (token && token.length > 0) {
-    headers['Authorization'] = `Bearer ${token}`;
-    if (!token.startsWith('sol_sess.')) {
-      headers['X-API-Key'] = token;
-    }
-  }
-  if (idempotencyKey) {
-    headers['Idempotency-Key'] = idempotencyKey;
-  }
-  return headers;
-}
-
-/**
- * Uploads a composited photo strip or animated GIF to the decoupled backend (`/v1/shares`).
- * Falls back to direct Firestore persistence only if `VITE_API_BASE_URL` is not configured.
- *
- * @param {CreateSharePayload} payload - Image data URI, layout ID, export format, caption, and TTL
- * @returns {Promise<{ id: string; expiresAt?: string | null }>} Created share document identifier
- */
-export async function createCloudShare(
-  payload: CreateSharePayload
-): Promise<{ readonly id: string; readonly expiresAt?: string | null }> {
-  const expiresAtIso =
-    typeof payload.ttlHours === 'number' && payload.ttlHours > 0
-      ? new Date(Date.now() + payload.ttlHours * 3_600_000).toISOString()
-      : null;
-
-  if (API_BASE_URL.length > 0) {
-    const token = await resolveAuthToken();
-    const idempotencyKey = `sol_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-    const response = await fetch(`${API_BASE_URL}/v1/shares`, {
-      method: 'POST',
-      headers: buildHeaders(true, token, idempotencyKey),
-      body: JSON.stringify(payload),
-    });
-
+    const response = await fetch(endpoint(path), { ...init, headers: { Accept: 'application/json, application/problem+json', ...(init.body ? { 'Content-Type': 'application/json' } : {}), ...init.headers }, signal: controller.signal });
+    if (response.status === 204) return null;
+    if (!response.headers.get('content-type')?.includes('json')) throw new ApiError(503, 'Cloud sharing is unavailable here. Download your photos or try again later.');
+    const data = await response.json() as Record<string, unknown>;
     if (!response.ok) {
-      throw new Error(`Backend share creation failed with HTTP ${response.status}`);
+      const errors = Array.isArray(data.errors) ? data.errors.filter((e): e is { field: string; message: string } => !!e && typeof e.field === 'string' && typeof e.message === 'string') : [];
+      throw new ApiError(response.status, typeof data.detail === 'string' ? data.detail : `Request failed (${response.status}).`, typeof data.request_id === 'string' ? data.request_id : response.headers.get('x-request-id') ?? undefined, errors);
     }
-
-    const created = (await response.json()) as { id: string; expiresAt?: string | null };
-    return { id: created.id, expiresAt: created.expiresAt ?? expiresAtIso };
-  }
-
-  // Fallback when standalone backend URL is not configured
-  const shareDocRef = doc(collection(db, 'shares'));
-  await setDoc(shareDocRef, {
-    imageUrl: payload.imageUrl,
-    layout: payload.layout,
-    format: payload.format,
-    ...(payload.caption ? { caption: payload.caption } : {}),
-    ...(expiresAtIso ? { expiresAt: expiresAtIso } : {}),
-    createdAt: new Date(),
-  });
-  return { id: shareDocRef.id, expiresAt: expiresAtIso };
+    return data;
+  } catch (error) {
+    if (signal?.aborted) throw new DOMException('Request cancelled.', 'AbortError');
+    if (error instanceof ApiError) throw error;
+    throw new ApiError(503, controller.signal.aborted ? 'The request timed out. Your local photos are safe; please retry.' : 'Unable to connect. Your local photos are safe; check your connection and retry.');
+  } finally { clearTimeout(timer); signal?.removeEventListener('abort', abort); }
 }
-
-/**
- * Fetches a shared photo strip or GIF by ID from the decoupled backend (`/v1/shares/:id`).
- *
- * @param {string} id - Unique share identifier
- * @returns {Promise<ShareData | null>} Share record (with `isExpired: true` if 410 Gone) or `null` if not found
- */
-export async function fetchCloudShare(id: string): Promise<ShareData | null> {
-  if (API_BASE_URL.length > 0) {
-    const response = await fetch(
-      `${API_BASE_URL}/v1/shares/${encodeURIComponent(id)}`,
-      {
-        method: 'GET',
-        headers: buildHeaders(false, null),
-      }
-    );
-
-    if (response.status === 404) {
-      return null;
-    }
-
-    if (response.status === 410) {
-      return {
-        id,
-        imageUrl: '',
-        layout: '1x4',
-        createdAt: null,
-        isExpired: true,
-      };
-    }
-
-    if (!response.ok) {
-      throw new Error(`Backend share lookup failed with HTTP ${response.status}`);
-    }
-
-    return (await response.json()) as ShareData;
-  }
-
-  const docRef = doc(db, 'shares', id);
-  const docSnap = await getDoc(docRef);
-  if (!docSnap.exists()) {
-    return null;
-  }
-  const raw = docSnap.data() as ShareData;
-  if (raw.expiresAt && Date.parse(raw.expiresAt) <= Date.now()) {
-    return {
-      ...raw,
-      isExpired: true,
-    };
-  }
-  return raw;
+async function token(force = false): Promise<string> {
+  if (!force && cached && Date.parse(cached.expiresAt) - 30000 > Date.now()) return cached.token;
+  pending ??= (async () => {
+    const data = await request('/v1/sessions', { method: 'POST', headers: cached ? { Authorization: `Bearer ${cached.token}` } : {} }) as Record<string, unknown>;
+    if (typeof data.token !== 'string' || !data.token.startsWith('sol_sess.') || typeof data.expiresAt !== 'string' || !Number.isFinite(Date.parse(data.expiresAt))) throw new ApiError(503, 'The server returned an invalid session. Please retry.');
+    cached = { token: data.token, expiresAt: data.expiresAt };
+    try { sessionStorage.setItem('sol_session_v2', JSON.stringify(cached)); } catch { /* In-memory sessions still work. */ }
+    return cached.token;
+  })().finally(() => { pending = null; });
+  return pending;
 }
-
-/**
- * Generates an AI or curated retro photobooth strip caption (`POST /v1/shares/caption`, `FEAT-01`).
- *
- * @param {CaptionMood} mood - Emotional tone (`'nostalgic' | 'playful' | 'romantic' | 'minimal'`)
- * @param {string} [layout='1x4'] - Active strip layout ID
- * @returns {Promise<CaptionResult>} Generated caption and date-stamp
- */
-export async function generateRetroCaption(
-  mood: CaptionMood,
-  layout = '1x4'
-): Promise<CaptionResult> {
-  if (API_BASE_URL.length > 0) {
-    try {
-      const response = await fetch(`${API_BASE_URL}/v1/shares/caption`, {
-        method: 'POST',
-        headers: buildHeaders(true, null),
-        body: JSON.stringify({ mood, layout }),
-      });
-      if (response.ok) {
-        return (await response.json()) as CaptionResult;
-      }
-    } catch {
-      // Fall back to curated local library below
-    }
+export function safeImageSource(value: unknown): value is string { return typeof value === 'string' && value.length <= 810000 && /^data:image\/(jpeg|png|gif);base64,[A-Za-z0-9+/]+={0,2}$/.test(value); }
+function validShare(data: unknown): data is ShareData {
+  if (!data || typeof data !== 'object') return false;
+  const value = data as ShareData;
+  return safeImageSource(value.imageUrl) && typeof value.layout === 'string' && typeof value.createdAt === 'string' && Number.isFinite(Date.parse(value.createdAt)) && (!value.expiresAt || typeof value.expiresAt === 'string' && Number.isFinite(Date.parse(value.expiresAt))) && (!value.caption || typeof value.caption === 'string' && value.caption.length <= 240);
+}
+export async function createCloudShare(payload: CreateSharePayload, operationKey: string = crypto.randomUUID()): Promise<CreatedShare> {
+  let auth = await token(), result: unknown;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try { result = await request('/v1/shares', { method: 'POST', headers: { Authorization: `Bearer ${auth}`, 'Idempotency-Key': operationKey }, body: JSON.stringify(payload) }); break; }
+    catch (error) { if (error instanceof ApiError && error.status === 401 && attempt === 0) auth = await token(true); else throw error; }
   }
-
-  const pool = LOCAL_CURATED_CAPTIONS[mood] ?? LOCAL_CURATED_CAPTIONS.nostalgic;
-  const chosen = pool[localCaptionCursor % pool.length] ?? pool[0]!;
-  localCaptionCursor += 1;
-  const now = new Date();
-  const dateStamp = `'98 ${String(now.getMonth() + 1).padStart(2, '0')} ${String(now.getDate()).padStart(2, '0')}`;
-
-  return {
-    caption: chosen,
-    dateStamp,
-    mood,
-    source: 'curated',
-  };
+  const data = result as Record<string, unknown>;
+  if (!data || !validShare(data) || typeof data.id !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(data.id) || typeof data.ownerToken !== 'string') throw new ApiError(503, 'The server returned an invalid share. Please retry with the same photos.');
+  return { id: data.id, ownerToken: data.ownerToken, expiresAt: typeof data.expiresAt === 'string' ? data.expiresAt : null };
+}
+export async function fetchCloudShare(id: string, signal?: AbortSignal): Promise<ShareData | null> {
+  if (!/^[a-zA-Z0-9_-]{1,128}$/.test(id)) throw new ApiError(400, 'This share reference is invalid.');
+  try { const data = await request(`/v1/shares/${id}`, {}, signal); if (!validShare(data)) throw new ApiError(503, 'This shared photo could not be validated.'); return data; }
+  catch (error) { if (error instanceof ApiError && error.status === 404) return null; if (error instanceof ApiError && error.status === 410) return { id, imageUrl: '', layout: '', createdAt: null, isExpired: true }; throw error; }
+}
+export async function deleteCloudShare(id: string, owner: string): Promise<void> { await request(`/v1/shares/${encodeURIComponent(id)}`, { method: 'DELETE', headers: { 'X-Owner-Token': owner } }); }
+export function sharePageUrl(id: string): string { return `${window.location.origin}/share?id=${encodeURIComponent(id)}`; }
+export function socialShareUrl(id: string): string { return new URL(endpoint(`/v1/shares/${encodeURIComponent(id)}/og`), window.location.origin).href; }
+export async function generateRetroCaption(mood: CaptionMood, layout = '1x4'): Promise<CaptionResult> {
+  try { const data = await request('/v1/shares/caption', { method: 'POST', body: JSON.stringify({ mood, layout }) }) as CaptionResult; if (typeof data.caption !== 'string' || data.caption.length > 240 || !['gemini', 'curated'].includes(data.source)) throw new Error('Invalid caption'); return data; }
+  catch { return { caption: { nostalgic: 'A little moment, kept forever.', playful: 'Caught in the middle of a good day.', romantic: 'My favorite place is next to you.', minimal: 'HERE. TOGETHER.' }[mood], dateStamp: new Date().toISOString().slice(0, 10), mood, source: 'curated', offlineFallback: true }; }
 }
