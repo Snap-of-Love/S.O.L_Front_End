@@ -499,7 +499,7 @@ export function renderStrip(
   filterId: FilterType = 'none',
   lensEffect: LensEffectType = 'none',
   customCaption?: string,
-  edits: { crops?: readonly PhotoCrop[]; decorations?: readonly Decoration[] } = {}
+  edits: { crops?: readonly PhotoCrop[]; decorations?: readonly Decoration[]; overlay?: CanvasImageSource; customFrame?: boolean } = {}
 ): HTMLCanvasElement {
   const bgCanvas = document.createElement('canvas');
   bgCanvas.width = layout.width;
@@ -628,6 +628,7 @@ export function renderStrip(
     });
   }
 
+  if (!edits.customFrame) {
   // Apply Date Stamp
   if (showDate) {
     const dateStr = format(new Date(), 'yy.MM.dd'); // nostalgic camera format e.g. '26.05.20'
@@ -683,7 +684,7 @@ export function renderStrip(
 
     if (customCaption && customCaption.trim().length > 0) {
       ctx.font = 'italic 14px "Georgia", serif';
-      ctx.fillText(`"${customCaption.trim()}"`, textX, textY - 22);
+      ctx.fillText(`"${customCaption.trim()}"`, textX, textY - 22, Math.max(40, textX - 35));
     }
     ctx.textAlign = 'left'; // reset
 
@@ -698,11 +699,13 @@ export function renderStrip(
     ctx.fillText(theme.label, textX, textY);
     if (customCaption && customCaption.trim().length > 0) {
       ctx.font = 'italic 14px "Georgia", serif';
-      ctx.fillText(`"${customCaption.trim()}"`, textX, textY - 22);
+      ctx.fillText(`"${customCaption.trim()}"`, textX, textY - 22, Math.max(40, textX - 35));
     }
     ctx.textAlign = 'left'; // reset
   }
 
+  }
+  if (edits.overlay) ctx.drawImage(edits.overlay, 0, 0, layout.width, layout.height);
   renderDecorations(ctx, edits.decorations ?? [], layout.width, layout.height);
   return bgCanvas;
 }
