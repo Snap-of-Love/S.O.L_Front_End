@@ -18,3 +18,9 @@ test('normalization preserves aspect ratio without upscaling', () => {
   assert.deepEqual(fittedSize(100, 200), { width: 100, height: 200 });
   assert.throws(() => fittedSize(0, 300));
 });
+
+test('imports reject empty and excessive batches before decoding', async () => {
+  const { importPhotos } = await import('../src/studio/images.ts');
+  await assert.rejects(importPhotos([]), /one and eight/);
+  await assert.rejects(importPhotos(Array.from({ length: 9 }, () => new File(['x'], 'x.png'))), /one and eight/);
+});

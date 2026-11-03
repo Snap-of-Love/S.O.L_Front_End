@@ -41,3 +41,53 @@ export function fittedSize(width: number, height: number, maximum = 1600) {
   const scale = Math.min(1, maximum / Math.max(width, height));
   return { width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)) };
 }
+
+export function loadImage(source: string, signal?: AbortSignal): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image(); image.decoding = 'async';
+    const clean = () => { clearTimeout(timer); image.onload = null; image.onerror = null; signal?.removeEventListener('abort', abort); };
+    const abort = () => { clean(); image.src = ''; reject(new DOMException('Photo loading cancelled.', 'AbortError')); };
+    const timer = setTimeout(() => { clean(); image.src = ''; reject(new Error('Photo decoding timed out. Try a smaller photo.')); }, 15000);
+    image.onload = () => { clean(); resolve(image); };
+    image.onerror = () => { clean(); reject(new Error('This photo could not be decoded. Try re-exporting it as JPEG or PNG.')); };
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) { abort(); return; }
+    image.src = source;
+  });
+}
+export async function normalizePhoto(file: File, signal?: AbortSignal): Promise<StudioPhoto> {
+  await validatePhoto(file);
+  if (signal?.aborted) throw new DOMException('Import cancelled.', 'AbortError');
+  const url = URL.createObjectURL(file);
+  try {
+    const image = await loadImage(url, signal);
+    const size = fittedSize(image.naturalWidth, image.naturalHeight);
+    const canvas = document.createElement('canvas'); canvas.width = size.width; canvas.height = size.height;
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('Photo editing is unavailable in this browser.');
+    context.fillStyle = '#ffffff'; context.fillRect(0, 0, size.width, size.height);
+    context.drawImage(image, 0, 0, size.width, size.height);
+    return { id: crypto.randomUUID(), name: file.name.slice(0, 100), frames: [canvas.toDataURL('image/jpeg', 0.9)] };
+  } finally { URL.revokeObjectURL(url); }
+}
+export async function importPhotos(files: readonly File[], signal?: AbortSignal): Promise<StudioPhoto[]> {
+  if (!files.length || files.length > MAX_PHOTOS) throw new Error('Choose between one and eight photos.');
+  const photos: StudioPhoto[] = [];
+  // Decode sequentially so several large photos do not allocate full-sized bitmaps together.
+  for (const file of files) photos.push(await normalizePhoto(file, signal));
+  return photos;
+}
+export async function photoCanvases(photos: readonly StudioPhoto[], signal?: AbortSignal): Promise<HTMLCanvasElement[][]> {
+  const result: HTMLCanvasElement[][] = [];
+  for (const photo of photos) {
+    const frames: HTMLCanvasElement[] = [];
+    for (const url of photo.frames) {
+      const image = await loadImage(url, signal), size = fittedSize(image.naturalWidth, image.naturalHeight);
+      const canvas = document.createElement('canvas'); canvas.width = size.width; canvas.height = size.height;
+      const ctx = canvas.getContext('2d'); if (!ctx) throw new Error('Canvas is unavailable.');
+      ctx.drawImage(image, 0, 0, canvas.width, canvas.height); frames.push(canvas);
+    }
+    result.push(frames);
+  }
+  return result;
+}
