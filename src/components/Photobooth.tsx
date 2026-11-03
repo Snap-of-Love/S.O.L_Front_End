@@ -251,7 +251,7 @@ export default function Photobooth() {
   const decorationCommit = useRef<(layers:Decoration[])=>void>(()=>{});
   const operation = useRef<{fingerprint:string;key:string}|null>(null);
   const activeCustom = customTemplate?.id === activeLayoutId ? customTemplate : null;
-  const activeLayout = activeCustom ? templateLayout(activeCustom) : LAYOUTS[activeLayoutId] ?? LAYOUTS['1x4'];
+  const activeLayout = useMemo(() => activeCustom ? templateLayout(activeCustom) : LAYOUTS[activeLayoutId] ?? LAYOUTS['1x4'], [activeCustom, activeLayoutId]);
   useEffect(()=>{const controller=new AbortController();setOverlay(undefined);if(activeCustom?.overlay)void validateOverlay(activeCustom.overlay,activeCustom,controller.signal).then(image=>{if(!controller.signal.aborted)setOverlay(image);}).catch(e=>{if(!controller.signal.aborted)setFeatureError(e.message);});return()=>controller.abort();},[activeCustom]);
   const renderStrip = useCallback((...args:Parameters<typeof baseRenderStrip>)=>{
     if(activeCustom?.overlay&&!overlay)throw new Error('Frame artwork is still preparing. Please retry.');
@@ -783,6 +783,7 @@ export default function Photobooth() {
               scrollToSection={scrollToSection}
               isScrolled={isScrolled}
               featureTools={sessionTools}
+              photoImport={<div className="sol-additions lobby-import"><ImportPhotos onImported={photos => void imported(photos)} onError={setFeatureError} disabled={!draft.ready || isExporting} /></div>}
             />
           </motion.div>
         )}

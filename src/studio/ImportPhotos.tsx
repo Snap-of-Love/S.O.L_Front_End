@@ -19,7 +19,7 @@ export function ImportPhotos({ onImported, onError, disabled = false }: Props) {
   return <div className={`photo-import ${dragging ? 'is-dragging' : ''}`} onDragOver={event => { event.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={event => { event.preventDefault(); setDragging(false); void load(event.dataTransfer.files); }}>
     <input ref={input} type="file" accept="image/jpeg,image/png,image/webp" multiple hidden disabled={disabled || busy} aria-label="Choose photos to import" onChange={event => { void load(event.target.files); event.target.value = ''; }} />
     <button type="button" className="button button-secondary" disabled={busy || disabled} aria-describedby={help} onClick={() => input.current?.click()}>
-      {busy ? <LoaderCircle size={18} className="spin" /> : <Upload size={18} />} {busy ? 'Preparing photos…' : 'Import photos'}
+      {busy ? <LoaderCircle size={18} className="spin" /> : <Upload size={18} />} {busy ? 'Preparing photos…' : 'Upload photos'}
     </button>
     <p id={help}>Choose or drop 1–8 JPEG, PNG or WebP photos. Up to 12 MB each.</p>
     <p className="privacy-note">Photos stay on this device until you create a share link.</p>
