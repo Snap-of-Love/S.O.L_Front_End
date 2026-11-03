@@ -13,3 +13,9 @@ test('unknown versions, remote photo URLs and invalid settings are rejected', ()
   assert.throws(() => parseDraft({ version: 1, savedAt: Date.now(), project }), /invalid photo/);
   project.photos = []; project.grain = NaN; assert.throws(() => parseDraft({ version: 1, savedAt: Date.now(), project }));
 });
+
+test('per-photo crops survive recovery and invalid transforms are rejected', async () => {
+  const { defaultCrop } = await import('../src/studio/crop.ts'); const project = emptyProject(); project.crops = [{ ...defaultCrop(), zoom: 2, x: 0.5, rotation: 90 }];
+  assert.deepEqual(parseDraft({ version: 1, savedAt: Date.now(), project }).project.crops, project.crops);
+  project.crops[0]!.zoom = 10; assert.throws(() => parseDraft({ version: 1, savedAt: Date.now(), project }), /crop/);
+});
