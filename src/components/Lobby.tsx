@@ -11,6 +11,7 @@ interface LobbyProps {
   scrollToTop: () => void;
   scrollToSection: (id: string) => void;
   isScrolled: boolean;
+  featureTools?: React.ReactNode;
 }
 
 export default function Lobby({
@@ -18,6 +19,7 @@ export default function Lobby({
   scrollToTop,
   scrollToSection,
   isScrolled,
+  featureTools,
 }: LobbyProps) {
   // Localized states only used during Lobby view
   const [hoveredSpecimenIndex, setHoveredSpecimenIndex] = useState<number | null>(null);
@@ -150,6 +152,7 @@ export default function Lobby({
         </button>
       </div>
 
+      <details className="sol-additions lobby-tools"><summary>Import photos · recover session · custom frames</summary>{featureTools}</details>
       {/* CRT glitch LOGO Hero */}
       <div className="w-full flex flex-col items-center justify-center py-20 border-x border-b border-stone-900 bg-[#09090c]/40 relative min-h-[calc(100vh-140px)]">
         <div className="absolute top-4 left-6 text-[8px] font-mono text-stone-600 tracking-widest font-bold hidden md:block">

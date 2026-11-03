@@ -24,6 +24,8 @@ export default function SharePage({ id }: SharePageProps) {
     typeof navigator !== 'undefined' && typeof navigator.share === 'function';
 
   useEffect(() => {
+    const controller = new AbortController();
+    setShareData(null); setError(null); setLoading(true);
     const fetchShareData = async () => {
       if (!id) {
         setError('No memory reference specified.');
@@ -32,7 +34,8 @@ export default function SharePage({ id }: SharePageProps) {
       }
 
       try {
-        const data = await fetchCloudShare(id);
+        const data = await fetchCloudShare(id, controller.signal);
+        if (controller.signal.aborted) return;
 
         if (!data) {
           setError('This retro memory does not exist.');
@@ -42,14 +45,15 @@ export default function SharePage({ id }: SharePageProps) {
           setShareData(data);
         }
       } catch (err) {
-        console.error('Error fetching share data:', err);
+        if (controller.signal.aborted) return;
         setError('Unable to load memory from the cloud.');
       } finally {
-        setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       }
     };
 
     void fetchShareData();
+    return () => controller.abort();
   }, [id]);
 
   const handleDownload = async () => {
@@ -73,7 +77,7 @@ export default function SharePage({ id }: SharePageProps) {
       URL.revokeObjectURL(localUrl);
     } catch (err) {
       console.error('Fetch download failed, opening in new tab', err);
-      window.open(shareData.imageUrl, '_blank');
+      setError('Unable to download this memory. Please reload and try again.');
     } finally {
       setIsDownloading(false);
     }
