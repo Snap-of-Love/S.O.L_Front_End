@@ -1,3 +1,6 @@
+import { ImportPhotos } from '../studio/ImportPhotos';
+import { photoCanvases } from '../studio/images';
+import { layoutForCount } from '../studio/layouts';
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   Camera,
@@ -85,6 +88,7 @@ function PixelHeart({ className, style }: { className?: string; style?: React.CS
 
 export default function Photobooth() {
   const [videoElement, setVideoElement] = useState<HTMLVideoElement | null>(null);
+  const [importError, setImportError] = useState('');
   const [hearts, setHearts] = useState<HeartParticle[]>([]);
 
   const spawnHearts = useCallback(() => {
@@ -851,6 +855,16 @@ export default function Photobooth() {
               scrollToSection={scrollToSection}
               isScrolled={isScrolled}
             />
+            <ImportPhotos onError={setImportError} onImported={async photos => {
+              try {
+                const canvases = await photoCanvases(photos);
+                const layout = layoutForCount(photos.length);
+                setActiveLayoutId(layout.id); setCapturedPhotos(canvases);
+                setSlotFrameIndices(photos.map(() => 0)); setSelectedPhotoIndex(0);
+                setCaptureState('completed'); setScreen('review'); setImportError('');
+              } catch (error) { setImportError(error instanceof Error ? error.message : 'Unable to open photos.'); }
+            }} />
+            {importError && <p role="alert">{importError}</p>}
           </motion.div>
         )}
 
