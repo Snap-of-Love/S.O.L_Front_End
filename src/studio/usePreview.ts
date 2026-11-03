@@ -5,7 +5,7 @@ import { LAYOUTS } from './layouts';
 import { renderStrip } from '../lib/renderUtils';
 export function compose(canvases: HTMLCanvasElement[][], project: StudioProject, frame?: number) {
   const layout = LAYOUTS[project.layoutId] ?? LAYOUTS['1x4']!;
-  return renderStrip(canvases, layout, project.grain, project.showDate, frame ?? project.frames, project.themeId, project.filterId, project.lens, project.caption);
+  return renderStrip(canvases, layout, project.grain, project.showDate, frame ?? project.frames, project.themeId, project.filterId, project.lens, project.caption, { crops: project.crops });
 }
 export function usePreview(project: StudioProject) {
   const [canvases, setCanvases] = useState<HTMLCanvasElement[][]>([]), [url, setUrl] = useState(''), [error, setError] = useState(''), [preparing, setPreparing] = useState(false);

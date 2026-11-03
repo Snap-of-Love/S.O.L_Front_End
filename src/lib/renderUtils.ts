@@ -1,3 +1,4 @@
+import { drawCroppedPhoto, type PhotoCrop } from '../studio/crop.ts';
 import { format } from 'date-fns';
 import qrcode from 'qrcode-generator';
 
@@ -496,7 +497,8 @@ export function renderStrip(
   themeId: string = 'alabaster',
   filterId: FilterType = 'none',
   lensEffect: LensEffectType = 'none',
-  customCaption?: string
+  customCaption?: string,
+  edits: { crops?: readonly PhotoCrop[] } = {}
 ): HTMLCanvasElement {
   const bgCanvas = document.createElement('canvas');
   bgCanvas.width = layout.width;
@@ -539,23 +541,6 @@ export function renderStrip(
   layout.slots.forEach((slot, idx) => {
     const img = resolveSlotFrame(idx);
     if (img) {
-      const imgRatio = img.width / img.height;
-      const slotRatio = slot.w / slot.h;
-
-      let sx = 0,
-        sy = 0,
-        sw = img.width,
-        sh = img.height;
-
-      // Cover crop strategy
-      if (imgRatio > slotRatio) {
-        sw = sh * slotRatio;
-        sx = (img.width - sw) / 2;
-      } else {
-        sh = sw / slotRatio;
-        sy = (img.height - sh) / 2;
-      }
-
       // Draw backdrop border/accent first, then photo with optional rotation and shadow
       ctx.save();
       if (slot.rotation) {
@@ -588,7 +573,7 @@ export function renderStrip(
         }
 
         // Draw cropped photo onto the slot canvas
-        slotCtx.drawImage(img, sx, sy, sw, sh, 0, 0, slot.w, slot.h);
+        drawCroppedPhoto(slotCtx, img, slot.w, slot.h, edits.crops?.[idx]);
 
         // Fallback for Safari/iOS browsers that do not support native Canvas filters
         if (!('filter' in slotCtx) && filterId !== 'none') {
