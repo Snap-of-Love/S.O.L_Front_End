@@ -1,5 +1,7 @@
 # S.O.L frontend/backend integration follow-up
 
+> Historical pre-repair audit. See [README.md](README.md) for current features, verification and deployment limits. The proposed visual renovation was reverted; features adapt to the original design.
+
 **Date:** 3 November 2026, Asia/Makassar. **Decision:** integration remediation is required before production approval.
 
 This follow-up tests the actual frontend API client against the backend over local HTTP. It accompanies the [backend audit](https://github.com/Snap-of-Love/S.O.L_Back_End/blob/main/BACKEND_AUDIT.md) and the existing [frontend architecture audit](ARCHITECTURE_AUDIT.md). Application behavior has not been changed or repaired by these reports.
