@@ -1,4 +1,20 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { ImportPhotos } from '../studio/ImportPhotos';
+import { DraftBar } from '../studio/DraftBar';
+import { useDraft } from '../studio/useDraft';
+import { CropControls } from '../studio/CropControls';
+import { defaultCrop, type PhotoCrop } from '../studio/crop';
+import { DecorationControls } from '../studio/DecorationControls';
+import { DrawingPreview } from '../studio/DrawingPreview';
+import type { Decoration } from '../studio/decorations';
+import { TemplateEditor } from '../studio/TemplateEditor';
+import { templateLayout, type StudioTemplate } from '../studio/templates';
+import { validateOverlay } from '../studio/templateStorage';
+import { photoCanvases, type StudioPhoto } from '../studio/images';
+import type { StudioProject } from '../studio/project';
+import { LAYOUTS, layoutForCount } from '../studio/layouts';
+import { socialShareUrl, deleteCloudShare, type CreatedShare } from '../lib/api';
+import '../studio/additions.css';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
   Camera,
   Download,
@@ -33,13 +49,12 @@ import qrcode from 'qrcode-generator';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 import {
-  LAYOUTS,
   LayoutDef,
   CARD_THEMES,
   CardTheme,
   VISUAL_FILTERS,
   FilterType,
-  renderStrip,
+  renderStrip as baseRenderStrip,
   LensEffectType
 } from '../lib/renderUtils';
 import { createGifExporter } from '../lib/exportUtils';
@@ -116,6 +131,7 @@ export default function Photobooth() {
   // App Navigation Flow
   const [screen, setScreen] = useState<ScreenState>('landing');
   const [showPreloader, setShowPreloader] = useState<boolean>(true);
+  const completePreloader=useCallback(()=>setShowPreloader(false),[]);
 
   // Scroll container reference for Lobby smooth scroll triggers
   const lobbyScrollRef = useRef<HTMLDivElement | null>(null);
@@ -223,10 +239,34 @@ export default function Photobooth() {
   const [retakeTargetSlot, setRetakeTargetSlot] = useState<number | null>(null);
   const [customCaption, setCustomCaption] = useState<string>('');
   const [isGeneratingCaption, setIsGeneratingCaption] = useState<boolean>(false);
-  const [shareTtlHours, setShareTtlHours] = useState<ShareTtlHours>(null);
+  const [shareTtlHours, setShareTtlHours] = useState<ShareTtlHours>(24);
   const sessionAbortRef = useRef<AbortController | null>(null);
 
-  const activeLayout = LAYOUTS[activeLayoutId];
+  const [crops,setCrops] = useState<PhotoCrop[]>([]), [decorations,setDecorations] = useState<Decoration[]>([]);
+  const [customTemplate,setCustomTemplate] = useState<StudioTemplate|null>(null), [overlay,setOverlay] = useState<HTMLImageElement>();
+  const [drawing,setDrawing] = useState(false), [ink,setInk] = useState('#a92b35');
+  const [featureError,setFeatureError] = useState(''), [featureMessage,setFeatureMessage] = useState('');
+  const [cloudShare,setCloudShare] = useState<CreatedShare|null>(null);
+  const manageInput = useRef<HTMLInputElement>(null);
+  const decorationCommit = useRef<(layers:Decoration[])=>void>(()=>{});
+  const operation = useRef<{fingerprint:string;key:string}|null>(null);
+  const activeCustom = customTemplate?.id === activeLayoutId ? customTemplate : null;
+  const activeLayout = useMemo(() => activeCustom ? templateLayout(activeCustom) : LAYOUTS[activeLayoutId] ?? LAYOUTS['1x4'], [activeCustom, activeLayoutId]);
+  useEffect(()=>{const controller=new AbortController();setOverlay(undefined);if(activeCustom?.overlay)void validateOverlay(activeCustom.overlay,activeCustom,controller.signal).then(image=>{if(!controller.signal.aborted)setOverlay(image);}).catch(e=>{if(!controller.signal.aborted)setFeatureError(e.message);});return()=>controller.abort();},[activeCustom]);
+  const renderStrip = useCallback((...args:Parameters<typeof baseRenderStrip>)=>{
+    if(activeCustom?.overlay&&!overlay)throw new Error('Frame artwork is still preparing. Please retry.');
+    args[9]={crops,decorations,overlay,customFrame:!!activeCustom};return baseRenderStrip(...args);
+  },[crops,decorations,overlay,activeCustom]);
+  const draftPhotos = useMemo(()=>capturedPhotos.map((frames,i)=>({id:`photo-${i}`,name:`Photo ${i+1}`,frames:frames.map(canvas=>canvas.toDataURL('image/jpeg',.88))})),[capturedPhotos]);
+  const draftProject = useMemo<StudioProject>(()=>({photos:draftPhotos,layoutId:activeLayoutId,themeId:activeThemeId,filterId:activeFilterId,lens:lensEffect,grain:grainIntensity,showDate,caption:customCaption,frames:slotFrameIndices,crops,decorations,customTemplate}),[draftPhotos,activeLayoutId,activeThemeId,activeFilterId,lensEffect,grainIntensity,showDate,customCaption,slotFrameIndices,crops,decorations,customTemplate]);
+  const restoreProject = useCallback((project:StudioProject)=>{
+    void photoCanvases(project.photos).then(photos=>{sessionAbortRef.current?.abort();setCapturedPhotos(photos);setActiveLayoutId(project.layoutId);setActiveThemeId(project.themeId);setActiveFilterId(project.filterId);setLensEffect(project.lens);setGrainIntensity(project.grain);setShowDate(project.showDate);setCustomCaption(project.caption);setSlotFrameIndices(project.frames);setSelectedPhotoIndex(project.frames[0]??0);setActiveSlotPickerIdx('all');setCrops(project.crops);setDecorations(project.decorations);setCustomTemplate(project.customTemplate);setScreen('review');setFeatureMessage('Local session restored.');}).catch(e=>setFeatureError(e.message));
+  },[]);
+  const draft = useDraft(draftProject,restoreProject);
+  async function imported(photos:StudioPhoto[]){try{const canvases=await photoCanvases(photos);sessionAbortRef.current?.abort();setCapturedPhotos(canvases);setActiveLayoutId(customTemplate?.slots.length===photos.length?customTemplate.id:layoutForCount(photos.length).id);setSlotFrameIndices(photos.map(()=>0));setSelectedPhotoIndex(0);setCrops(photos.map(defaultCrop));setDecorations([]);setIsAnimatedPreview(false);setCaptureState('completed');setScreen('review');setFeatureError('');}catch(e){setFeatureError((e as Error).message);}}
+  const applyTemplate=(template:StudioTemplate)=>{if(capturedPhotos.length&&capturedPhotos.length!==template.slots.length)throw new Error(`This frame needs ${template.slots.length} photos. Start a new session or import that number first.`);setCustomTemplate(template);setActiveLayoutId(template.id);setFeatureMessage('Custom frame selected. Its artwork controls the footer and date area.');};
+  const sessionTools=<div className="sol-additions"><DraftBar draft={draft}/><ImportPhotos onImported={photos=>void imported(photos)} onError={setFeatureError} disabled={!draft.ready||isExporting}/><TemplateEditor onApply={applyTemplate}/></div>;
+
   const activeTheme = CARD_THEMES[activeThemeId];
   const currentFilter = VISUAL_FILTERS[activeFilterId];
 
@@ -265,12 +305,12 @@ export default function Photobooth() {
           videoElement.srcObject = stream;
           videoElement.onloadedmetadata = () => {
             if (!active) return;
-            videoElement.play();
+            void videoElement.play().catch(()=>{if(active)setFeatureError('Camera playback failed. Retry or import photos.');});
             setIsCameraReady(true);
           };
         }
       } catch (err) {
-        console.error('Failed to access camera', err);
+        if(active)setFeatureError('Camera unavailable or permission denied. You can import photos instead.');
         setIsCameraReady(false);
       }
     }
@@ -301,14 +341,14 @@ export default function Photobooth() {
     if (!video) return document.createElement('canvas');
 
     const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth || 640;
-    canvas.height = video.videoHeight || 480;
+    canvas.width = 640;
+    canvas.height = Math.round(640 * (video.videoHeight || 480) / (video.videoWidth || 640));
     const ctx = canvas.getContext('2d');
     if (ctx) {
       // Mirror the horizontal view
       ctx.translate(canvas.width, 0);
       ctx.scale(-1, 1);
-      ctx.drawImage(video, 0, 0);
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     }
     return canvas;
   }, [videoElement]);
@@ -371,6 +411,7 @@ export default function Photobooth() {
         updated[targetSlot] = frames;
         return updated;
       });
+      setCrops(previous=>Array.from({length:capturedPhotos.length},(_,i)=>i===targetSlot?defaultCrop():previous[i]??defaultCrop()));
       setRetakeTargetSlot(null);
       setCaptureState('completed');
       setScreen('review');
@@ -413,6 +454,7 @@ export default function Photobooth() {
     }
 
     if (signal.aborted) return;
+    setCrops(Array.from({length:totalShots},defaultCrop));
     setSlotFrameIndices(Array.from({ length: totalShots }, () => 2));
     setActiveSlotPickerIdx('all');
     setCaptureState('completed');
@@ -444,10 +486,11 @@ export default function Photobooth() {
   // Listen for Spacebar or Enter to start the photo session
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement)?.closest('input,textarea,select,button,a,[contenteditable=true]')) return;
       if (screen === 'active' && isCameraReady && captureState === 'idle') {
         if (e.key === ' ' || e.key === 'Enter') {
           e.preventDefault();
-          runSession();
+          void runSession().catch(e=>{setCaptureState('idle');setFeatureError(e instanceof Error?e.message:'Capture failed. Please retry or import photos.');});
         }
       }
     };
@@ -462,7 +505,7 @@ export default function Photobooth() {
 
   // Re-generate dynamic high-end preview strip on changes (pre-computing 5 burst frames when animated, FE-01, FEAT-01, FEAT-04)
   useEffect(() => {
-    if (screen !== 'review' || capturedPhotos.length === 0) return;
+    if (screen !== 'review' || capturedPhotos.length === 0 || activeCustom?.overlay && !overlay) return;
 
     if (isAnimatedPreview) {
       const urls = [0, 1, 2, 3, 4].map((idx) =>
@@ -506,7 +549,7 @@ export default function Photobooth() {
     activeFilterId,
     lensEffect,
     isAnimatedPreview,
-    customCaption,
+    customCaption, renderStrip, activeCustom, overlay,
   ]);
 
   // Animated "Live" Preview cycling effect over pre-computed DataURLs (zero canvas re-renders in interval, FE-01)
@@ -526,9 +569,9 @@ export default function Photobooth() {
   const handleExport = async (format: 'jpg' | 'png' | 'gif') => {
     if (!capturedPhotos.length) return;
     setIsExporting(true);
-    setIsUploadingCloud(true);
-    setShareUrl(null);
+    setIsUploadingCloud(false);
     setCopied(false);
+    setFeatureError('');
 
     try {
       let url = '';
@@ -604,137 +647,22 @@ export default function Photobooth() {
       playDing();
       setShowThankYouPopup(true);
 
-      // Upload to Cloud Firestore (Base64 direct storage for 100% free plan compliance)
-      (async () => {
-        try {
-          let uploadBlob = blob;
-
-          // If the format is image, downscale it to max 900px and compress as JPEG to ensure < 1MB limit
-          if (format === 'jpg' || format === 'png') {
-            const tempImg = new Image();
-            await new Promise((resolve, reject) => {
-              tempImg.onload = resolve;
-              tempImg.onerror = reject;
-              tempImg.src = url;
-            });
-
-            const shareCvs = document.createElement('canvas');
-            const maxDim = 900;
-            let sw = tempImg.width;
-            let sh = tempImg.height;
-            if (sw > maxDim || sh > maxDim) {
-              if (sw > sh) {
-                sh = Math.round((sh * maxDim) / sw);
-                sw = maxDim;
-              } else {
-                sw = Math.round((sw * maxDim) / sh);
-                sh = maxDim;
-              }
-            }
-            shareCvs.width = sw;
-            shareCvs.height = sh;
-            const sCtx = shareCvs.getContext('2d');
-            if (sCtx) {
-              sCtx.drawImage(tempImg, 0, 0, sw, sh);
-            }
-
-            uploadBlob = await new Promise<Blob>((resolve) => {
-              shareCvs.toBlob((b) => resolve(b!), 'image/jpeg', 0.70); // keeps it ~80KB
-            });
-          } else if (format === 'gif') {
-            // For GIF, if the original blob is too large, we generate a highly optimized low-res preview GIF
-            if (blob.size > 850 * 1024) {
-              const frames: HTMLCanvasElement[] = [];
-              const activeLayout = LAYOUTS[activeLayoutId] || LAYOUTS['1x4'];
-
-              // Generate the frames again, but with a lighter scale (e.g., 0.32)
-              const uploadScale = 0.32;
-              for (let i = 0; i < 5; i++) {
-                const f = renderStrip(
-                  capturedPhotos,
-                  activeLayout,
-                  grainIntensity,
-                  showDate,
-                  i,
-                  activeThemeId,
-                  activeFilterId,
-                  lensEffect,
-                  customCaption
-                );
-
-                const c = document.createElement('canvas');
-                c.width = f.width * uploadScale;
-                c.height = f.height * uploadScale;
-                const gc = c.getContext('2d');
-                if (gc) {
-                  gc.drawImage(f, 0, 0, c.width, c.height);
-                }
-                frames.push(c);
-              }
-
-              uploadBlob = await createGifExporter(frames, frames[0].width, frames[0].height, 8);
-            }
-          }
-
-          const getBase64 = (file: Blob): Promise<string> => {
-            return new Promise((resolve, reject) => {
-              const reader = new FileReader();
-              reader.readAsDataURL(file);
-              reader.onload = () => resolve(reader.result as string);
-              reader.onerror = (error) => reject(error);
-            });
-          };
-
-          const base64Image = await getBase64(uploadBlob);
-
-          const { id: docId } = await createCloudShare({
-            imageUrl: base64Image,
-            layout: format === 'gif' ? 'animated' : activeLayoutId,
-            format: format,
-            ...(customCaption.trim() ? { caption: customCaption.trim() } : {}),
-            ttlHours: shareTtlHours,
-          });
-
-          // Build sharing URL dynamically using window.location.origin to match the current domain
-          const baseUrl = window.location.origin;
-          setShareUrl(`${baseUrl}/share?id=${docId}`);
-        } catch (err) {
-          console.error('Firebase cloud sync failed:', err);
-        } finally {
-          if (url) {
-            URL.revokeObjectURL(url);
-          }
-          setIsUploadingCloud(false);
-        }
-      })();
+      setFeatureMessage('Download prepared. Nothing was uploaded.');
+      setTimeout(()=>URL.revokeObjectURL(url),30000);
 
     } catch (e) {
-      console.error('Export error', e);
+      setFeatureError(e instanceof Error ? e.message : 'Unable to export. Please retry.');
       setIsUploadingCloud(false);
     } finally {
       setIsExporting(false);
     }
   };
 
-  const triggerExport = (format: 'jpg' | 'png' | 'gif') => {
-    if (isPremium) {
-      handleExport(format);
-      return;
-    }
-
-    const currentCountStr = localStorage.getItem('sol_export_count') || '0';
-    const currentCount = parseInt(currentCountStr, 10);
-    const newCount = currentCount + 1;
-    localStorage.setItem('sol_export_count', newCount.toString());
-
-    if (newCount % 3 === 0) {
-      setPendingExportFormat(format);
-      setAdCountdown(5);
-      setShowAdOverlay(true);
-    } else {
-      handleExport(format);
-    }
-  };
+  const triggerExport = (format:'jpg'|'png'|'gif') => { void handleExport(format); };
+  async function shareCurrent(){
+    if(isUploadingCloud||!capturedPhotos.length)return;setIsUploadingCloud(true);setFeatureError('');setShowThankYouPopup(true);
+    try{const full=renderStrip(capturedPhotos,activeLayout,grainIntensity,showDate,slotFrameIndices,activeThemeId,activeFilterId,lensEffect,customCaption),small=document.createElement('canvas'),scale=Math.min(1,1200/Math.max(full.width,full.height));small.width=Math.round(full.width*scale);small.height=Math.round(full.height*scale);small.getContext('2d')?.drawImage(full,0,0,small.width,small.height);let imageUrl='';for(const quality of [.88,.72,.55]){imageUrl=small.toDataURL('image/jpeg',quality);if(imageUrl.length<=800000)break;}if(imageUrl.length>800000)throw new Error('Cloud copy is too large. Download locally or use smaller photos.');const payload={imageUrl,layout:activeLayoutId,format:'jpg' as const,caption:customCaption,ttlHours:shareTtlHours},fingerprint=JSON.stringify(payload);if(operation.current?.fingerprint!==fingerprint)operation.current={fingerprint,key:crypto.randomUUID()};const share=await createCloudShare(payload,operation.current.key);setCloudShare(share);setShareUrl(socialShareUrl(share.id));setFeatureMessage('Cloud link created. Anyone with the link can view this snapshot.');}catch(e){setFeatureError(e instanceof Error?e.message:'Cloud sharing failed. Your local photos are safe.');}finally{setIsUploadingCloud(false);}
+  }
 
   useEffect(() => {
     let timer: any = null;
@@ -749,9 +677,12 @@ export default function Photobooth() {
   }, [showAdOverlay, adCountdown]);
 
   const startNewSession = () => {
+    if(!draft.ready){setFeatureError('Open Import / recover session to restore or discard the saved draft first.');return;}
     sessionAbortRef.current?.abort();
+    setCrops([]);setDecorations([]);setFeatureError('');
     setIsFlashing(true);
     setTimeout(() => {
+      void draft.discard(false);
       setCapturedPhotos([]);
       setCaptureState('idle');
       setPreviewCanvasDataUrl(null);
@@ -821,9 +752,10 @@ export default function Photobooth() {
       )}
     >
       {showPreloader && (
-        <Preloader onComplete={() => setShowPreloader(false)} />
+        <Preloader onComplete={completePreloader} />
       )}
 
+      {(featureError||featureMessage)&&<div className="sol-feature-status" role={featureError?'alert':'status'}>{featureError||featureMessage}<button type="button" aria-label="Dismiss message" onClick={()=>{setFeatureError('');setFeatureMessage('');}}>×</button></div>}
       {/* Background Ambience Light Glows (Corner Edges) - Only rendered in studio screen views */}
       {screen !== 'landing' && (
         <>
@@ -850,6 +782,8 @@ export default function Photobooth() {
               scrollToTop={scrollToTop}
               scrollToSection={scrollToSection}
               isScrolled={isScrolled}
+              featureTools={sessionTools}
+              photoImport={<div className="sol-additions lobby-import"><ImportPhotos onImported={photos => void imported(photos)} onError={setFeatureError} disabled={!draft.ready || isExporting} /></div>}
             />
           </motion.div>
         )}
@@ -878,6 +812,7 @@ export default function Photobooth() {
             {/* Workspace Sidebar controls */}
             <aside className="w-full md:w-80 bg-[#0f0f0f] md:border-r border-[#2a2a2a] p-6 md:p-8 flex flex-col shrink-0 md:overflow-y-auto order-3 md:order-1">
 
+              {sessionTools}
               {/* Back to main landing */}
               <button
                 onClick={returnToMenu}
@@ -895,7 +830,7 @@ export default function Photobooth() {
                 <section>
                   <label className="text-[11px] uppercase tracking-widest text-[#888] font-semibold block mb-3">Frame Configuration</label>
                   <div className="grid grid-cols-5 md:grid-cols-3 gap-2">
-                    {Object.values(LAYOUTS).map((layout) => {
+                    {[...Object.values(LAYOUTS),...(customTemplate?[templateLayout(customTemplate)]:[])].map((layout) => {
                       const locked = isLocked(layout.id);
                       return (
                         <button
@@ -1162,6 +1097,7 @@ export default function Photobooth() {
 
               <div className="space-y-6 flex-grow">
 
+                <details className="sol-additions"><summary>Import & session recovery</summary><DraftBar draft={draft}/><ImportPhotos onImported={photos=>void imported(photos)} onError={setFeatureError}/></details>
                 {/* 1. Select Theme Card Template */}
                 <section>
                   <label className="text-[11px] uppercase tracking-widest text-[#888] font-semibold block mb-2.5">Card Material Theme</label>
@@ -1338,6 +1274,7 @@ export default function Photobooth() {
                   </p>
                 </section>
 
+                <div className="sol-additions"><details><summary>Crop & align photo {typeof activeSlotPickerIdx==='number'?activeSlotPickerIdx+1:1}</summary><p>Select a slot above to edit another photo.</p><CropControls value={crops[typeof activeSlotPickerIdx==='number'?activeSlotPickerIdx:0]??defaultCrop()} onChange={crop=>{const index=typeof activeSlotPickerIdx==='number'?activeSlotPickerIdx:0;setCrops(previous=>Array.from({length:capturedPhotos.length},(_,i)=>i===index?crop:previous[i]??defaultCrop()));}}/></details><details><summary>Stickers & drawings</summary><DecorationControls value={decorations} onChange={setDecorations} drawing={drawing} onDrawing={setDrawing} color={ink} onColor={setInk} onHistory={commit=>{decorationCommit.current=commit;}}/></details><TemplateEditor onApply={applyTemplate}/></div>
                 {/* 2b. AI Retro Caption & Cloud Link TTL (FEAT-01, FEAT-05) */}
                 <section className="pt-4 border-t border-[#222] space-y-3">
                   <div className="flex justify-between items-center">
@@ -1501,6 +1438,7 @@ export default function Photobooth() {
                   </button>
                 </div>
 
+                <div className="sol-additions"><p>Cloud sharing uploads a JPEG snapshot. Anyone with its link can view it. Local exports stay on your device.</p><button type="button" className="button" disabled={isUploadingCloud||isExporting} onClick={()=>void shareCurrent()}>Create cloud link / QR</button><button type="button" className="text-button" onClick={()=>manageInput.current?.click()}>Manage previous cloud link</button><input ref={manageInput} type="file" accept="application/json,.json" hidden onChange={async event=>{const file=event.target.files?.[0];event.target.value='';if(!file)return;try{if(file.size>4096)throw new Error('Choose a S.O.L management JSON file.');const value=JSON.parse(await file.text());if(value.version!==1||!/^([a-f0-9]{32})$/.test(value.id)||typeof value.ownerToken!=='string'||!/^[a-zA-Z0-9_-]{43}$/.test(value.ownerToken))throw new Error('Invalid cloud management file.');setCloudShare({id:value.id,ownerToken:value.ownerToken});setShareUrl(socialShareUrl(value.id));setShowThankYouPopup(true);}catch(e){setFeatureError((e as Error).message);}}}/></div>
                 <div className="grid grid-cols-2 gap-2 mt-4">
                   <button
                     onClick={startNewSession}
@@ -1525,14 +1463,7 @@ export default function Photobooth() {
 
               {previewCanvasDataUrl && (
                 <div className="relative max-h-full max-w-full flex items-center justify-center animate-in fade-in zoom-in-95 duration-500 z-10 p-2 select-none md:p-6">
-                  <img
-                    src={previewCanvasDataUrl}
-                    alt="Final composited strip"
-                    className="max-h-[80vh] md:max-h-[84vh] w-auto max-w-full object-contain shadow-3xl transform md:rotate-1"
-                    style={{
-                      filter: 'drop-shadow(0 25px 50px rgba(0, 0, 0, 0.7))'
-                    }}
-                  />
+                  <div className="sol-additions sol-print"><DrawingPreview url={previewCanvasDataUrl} width={activeLayout.width} height={activeLayout.height} drawing={drawing&&decorations.length<40} color={ink} onStroke={layer=>decorationCommit.current([...decorations,layer])}/></div>
                   {isExporting && (
                     <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center">
                       <div className="w-8 h-8 border-4 border-[#333] border-t-white rounded-full animate-spin mb-4" />
@@ -1543,7 +1474,9 @@ export default function Photobooth() {
               )}
             </main>
           </motion.div>
-        )}        {/* Premium Checkout Modal */}
+        )}
+      </AnimatePresence>
+      {/* Premium Checkout Modal */}
         <AnimatePresence>
           {showPremiumModal && (
             <div className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto">
@@ -1668,7 +1601,7 @@ export default function Photobooth() {
                   </div>
                   <h2 className="font-serif text-2xl italic text-white leading-none">Snap of Love</h2>
                   <p className="text-[9px] uppercase tracking-[0.2em] text-stone-500">
-                    {isUploadingCloud ? 'Syncing to Cloud Tape...' : 'Memory Composited & Linked'}
+                    {isUploadingCloud ? 'Syncing to Cloud Tape...' : shareUrl ? 'Memory Composited & Linked' : 'Memory Saved to Your Device'}
                   </p>
                 </div>
 
@@ -1733,14 +1666,15 @@ export default function Photobooth() {
                     </div>
                   ) : (
                     <div className="py-6 flex flex-col items-center gap-2 text-stone-500 text-[10px] uppercase tracking-wider">
-                      [ Cloud feature unavailable ]
+                      Local export is ready. Create a cloud link only if you want to upload and share it.
                     </div>
                   )}
                 </div>
 
+                {cloudShare&&<div className="sol-additions"><button type="button" className="button" onClick={()=>{const url=URL.createObjectURL(new Blob([JSON.stringify({version:1,id:cloudShare.id,ownerToken:cloudShare.ownerToken})],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=`SOL-manage-${cloudShare.id}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),30000);}}>Save private management key</button><button type="button" className="button" onClick={async()=>{try{await deleteCloudShare(cloudShare.id,cloudShare.ownerToken);setShareUrl(null);setCloudShare(null);setFeatureMessage('Cloud link revoked.');}catch(e){setFeatureError((e as Error).message);}}}>Revoke cloud link</button></div>}
                 <div className="space-y-3">
                   <p className="text-xs text-stone-400 leading-relaxed font-serif italic max-w-sm mx-auto">
-                    Your photo strip has been saved. Scan the QR code to load it on your phone or share the nostalgia!
+                    Your local download is ready. A cloud link, when created, can be scanned or shared separately.
                   </p>
                 </div>
 
@@ -1860,8 +1794,6 @@ export default function Photobooth() {
             </div>
           )}
         </AnimatePresence>
-
-      </AnimatePresence>
 
       {/* Retro Flash Screen Transition */}
       <AnimatePresence>

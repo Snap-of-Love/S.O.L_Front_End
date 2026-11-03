@@ -1,5 +1,7 @@
 # S.O.L architecture and testing audit
 
+> Historical pre-repair audit. See [README.md](README.md) for current features, verification and deployment limits. The proposed visual renovation was reverted; features adapt to the original design.
+
 **Date:** 3 November 2026 (Asia/Makassar). **Verdict: remediation required before production approval.**
 
 The application has a reasonable small-product structure, but the current security and persistence boundaries are insufficient. The most serious findings are cross-session access to other users' records, client-controlled transaction completion, and successful API responses when database writes fail. The frontend also has confirmed accessibility barriers and performance concerns. Passing the existing tests does not establish production readiness.
