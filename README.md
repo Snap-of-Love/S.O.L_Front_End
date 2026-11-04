@@ -6,7 +6,7 @@ Use Node >=22.18, `npm ci`, then `npm run dev`. Copy `.env.example` if needed. L
 
 ## Feature locations
 
-- **Import photos:** open “Import photos · recover session · custom frames” in the lobby, or “Import & session recovery” in review. Choose/drop 1–8 JPEG, PNG or WebP files. Imports are validated, decoded locally and matched to the photo count. No upload occurs on import.
+- **Upload photos:** use the visible Upload photos button directly below the original lobby navigation, or open “Import & session recovery” in review. Choose/drop 1–8 JPEG, PNG or WebP files. Imports are validated, decoded locally and matched to the photo count. No cloud upload occurs on import.
 - **Draft recovery:** the same controls offer Restore, Discard, opt-out and Clear. Drafts expire after seven days and stay in this browser. Keep a local export as backup; site-data clearing/private browsing/storage limits can remove drafts. Storage failure does not block editing.
 - **Per-photo crop:** choose a slot in the original Burst Frame & Slot Editor, then expand Crop & align. Zoom, position, quarter-turn rotation, mirror and reset apply to that photo. Keyboard sliders work. Preview, downloads and cloud copies use the same transform.
 - **Stickers/drawings:** expand Stickers & drawings in the original sidebar. Add/select a sticker and position it with sliders, or draw on the preview. Undo/redo retains the last 30 decoration changes. Up to 40 layers and 400 points per stroke are accepted. Final layers survive draft recovery; undo history does not survive reload.
@@ -18,4 +18,8 @@ Original local JPG/PNG/GIF download controls remain. Cloud sharing is an explici
 
 `npm run lint`, `npm test` (23 tests), `npm run build` and `npm audit` passed after the original design was restored. Dependency audit reported zero vulnerabilities at verification. Native Chrome checks exercised the original launch/lobby/review layout, recovered a synthetic photo/caption/sticker draft, applied crop controls, imported and saved a transparent custom frame, and tested the local sharing bridge. Earlier synthetic-image checks also verified JPEG/PNG export and the cloud viewer. No personal photo was uploaded.
 
-Actual camera permission/capture across devices, production Firestore/IAM, production hosting configuration, field Core Web Vitals and full WCAG compliance remain outside those local checks. The paired backend includes an explicit staging/migration rollout in its README. Both repositories are on `feat/studio-repair-20261104`; no production environment settings or live data were changed.
+Actual camera permission/capture across devices, production Firestore/IAM, production hosting configuration, field Core Web Vitals and full WCAG compliance remain outside those local checks. The paired backend includes an explicit staging/migration rollout in its README.
+
+## Release connection
+
+The frontend feature release was merged into `main` in PR #4. The Vercel project is `s-o-l` in `andi-muhammad-abigails-projects`, serving `https://s-o-l.vercel.app/`. Its Git connection originally used `AndiAbi4925/S.O.L`, before the repository was transferred to `Snap-of-Love/S.O.L_Front_End`. Verify the connection and deploy the current `main` commit after a transfer; reconnecting alone does not replace an already published build. A GitHub commit being present is not evidence that Vercel has built or promoted it. Confirm the production deployment's source SHA in Vercel and exercise Upload photos on the public URL before declaring a release complete.
