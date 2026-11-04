@@ -1,0 +1,10 @@
+.git
+.github
+.agents
+.codex
+.audit
+audit
+tests
+AUDIT_EVIDENCE_2026-11-03.zip
+.env*
+node_modules
