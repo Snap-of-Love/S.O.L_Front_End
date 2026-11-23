@@ -11,8 +11,7 @@ interface LobbyProps {
   scrollToTop: () => void;
   scrollToSection: (id: string) => void;
   isScrolled: boolean;
-  featureTools?: React.ReactNode;
-  photoImport?: React.ReactNode;
+  draftControls: React.ReactNode;
 }
 
 export default function Lobby({
@@ -20,8 +19,7 @@ export default function Lobby({
   scrollToTop,
   scrollToSection,
   isScrolled,
-  featureTools,
-  photoImport,
+  draftControls,
 }: LobbyProps) {
   // Localized states only used during Lobby view
   const [hoveredSpecimenIndex, setHoveredSpecimenIndex] = useState<number | null>(null);
@@ -154,8 +152,10 @@ export default function Lobby({
         </button>
       </div>
 
-      {photoImport}
-      <details className="sol-additions lobby-tools"><summary>Recover session · custom frames</summary>{featureTools}</details>
+      <details className="sol-additions lobby-tools">
+        <summary>Local session recovery</summary>
+        {draftControls}
+      </details>
       {/* CRT glitch LOGO Hero */}
       <div className="w-full flex flex-col items-center justify-center py-20 border-x border-b border-stone-900 bg-[#09090c]/40 relative min-h-[calc(100vh-140px)]">
         <div className="absolute top-4 left-6 text-[8px] font-mono text-stone-600 tracking-widest font-bold hidden md:block">
@@ -338,10 +338,10 @@ export default function Lobby({
           <span className="text-[10px] font-mono text-stone-500 uppercase tracking-widest font-bold">S.O.L STUDIO SPECIFICATION</span>
         </div>
         {[
-          { label: "Various High-Fidelity Presets", spec: "6 Custom Photostrips theme (Cherry, sepia, obsidian, etc.)" },
+          { label: "Preset Frames & Themes", spec: "Choose a layout and a paper theme, including Cherry Blossom and Ink Obsidian" },
           { label: "Burst GIF Animation", spec: "GIF burst motion engine at 8 FPS compile" },
-          { label: "Cloud Save Synchronization", spec: "Share your pics after taking them by scanning the QR" },
-          { label: "Local Lossless Encoding", spec: "True RGB downloads without watermarks" },
+          { label: "Cloud Sharing", spec: "Create a QR link to a snapshot of your strip" },
+          { label: "Local Downloads", spec: "Save your strip as JPG, PNG or animated GIF" },
         ].map((cap, index) => (
           <div key={index} className="w-full flex justify-between items-center border-b border-stone-900 px-6 py-5">
             <span className="text-xs uppercase font-mono tracking-widest text-stone-400 font-bold">{cap.label}</span>

@@ -1,4 +1,3 @@
-import { ImportPhotos } from '../studio/ImportPhotos';
 import { DraftBar } from '../studio/DraftBar';
 import { useDraft } from '../studio/useDraft';
 import { CropControls } from '../studio/CropControls';
@@ -6,38 +5,24 @@ import { defaultCrop, type PhotoCrop } from '../studio/crop';
 import { DecorationControls } from '../studio/DecorationControls';
 import { DrawingPreview } from '../studio/DrawingPreview';
 import type { Decoration } from '../studio/decorations';
-import { TemplateEditor } from '../studio/TemplateEditor';
-import { templateLayout, type StudioTemplate } from '../studio/templates';
-import { validateOverlay } from '../studio/templateStorage';
-import { photoCanvases, type StudioPhoto } from '../studio/images';
+import { photoCanvases } from '../studio/images';
 import type { StudioProject } from '../studio/project';
-import { LAYOUTS, layoutForCount } from '../studio/layouts';
+import { LAYOUTS } from '../studio/layouts';
 import { socialShareUrl, deleteCloudShare, type CreatedShare } from '../lib/api';
 import '../studio/additions.css';
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
   Camera,
-  Download,
   RefreshCw,
-  Settings2,
   Sparkles,
   Clock,
   Heart,
   ArrowLeft,
-  Maximize2,
-  Film,
-  Eye,
   Smile,
-  ShieldCheck,
   Instagram,
-  Play,
-  Pause,
-  Volume2,
-  VolumeX,
   Link as LinkIcon,
   Check,
-  Loader2,
-  Lock
+  Loader2
 } from 'lucide-react';
 import {
   createCloudShare,
@@ -49,9 +34,7 @@ import qrcode from 'qrcode-generator';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 import {
-  LayoutDef,
   CARD_THEMES,
-  CardTheme,
   VISUAL_FILTERS,
   FilterType,
   renderStrip as baseRenderStrip,
@@ -153,12 +136,7 @@ export default function Photobooth() {
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [copied, setCopied] = useState<boolean>(false);
 
-  // Monetization States
-  const [isPremium, setIsPremium] = useState<boolean>(() => localStorage.getItem('sol_premium') === 'true');
   const [showPremiumModal, setShowPremiumModal] = useState<boolean>(false);
-  const [adCountdown, setAdCountdown] = useState<number>(0);
-  const [showAdOverlay, setShowAdOverlay] = useState<boolean>(false);
-  const [pendingExportFormat, setPendingExportFormat] = useState<'jpg' | 'png' | 'gif' | null>(null);
 
   // Desktop Fine Pointer (Mouse / Trackpad) Detection for Custom Cursor
   const [isFinePointer, setIsFinePointer] = useState<boolean>(false);
@@ -195,10 +173,6 @@ export default function Photobooth() {
     },
     [isFinePointer]
   );
-
-  const isLocked = (_layoutId: string) => {
-    return false;
-  };
 
   const getQrCodeDataUrl = (url: string) => {
     try {
@@ -243,31 +217,43 @@ export default function Photobooth() {
   const sessionAbortRef = useRef<AbortController | null>(null);
 
   const [crops,setCrops] = useState<PhotoCrop[]>([]), [decorations,setDecorations] = useState<Decoration[]>([]);
-  const [customTemplate,setCustomTemplate] = useState<StudioTemplate|null>(null), [overlay,setOverlay] = useState<HTMLImageElement>();
   const [drawing,setDrawing] = useState(false), [ink,setInk] = useState('#a92b35');
   const [featureError,setFeatureError] = useState(''), [featureMessage,setFeatureMessage] = useState('');
   const [cloudShare,setCloudShare] = useState<CreatedShare|null>(null);
   const manageInput = useRef<HTMLInputElement>(null);
   const decorationCommit = useRef<(layers:Decoration[])=>void>(()=>{});
   const operation = useRef<{fingerprint:string;key:string}|null>(null);
-  const activeCustom = customTemplate?.id === activeLayoutId ? customTemplate : null;
-  const activeLayout = useMemo(() => activeCustom ? templateLayout(activeCustom) : LAYOUTS[activeLayoutId] ?? LAYOUTS['1x4'], [activeCustom, activeLayoutId]);
-  useEffect(()=>{const controller=new AbortController();setOverlay(undefined);if(activeCustom?.overlay)void validateOverlay(activeCustom.overlay,activeCustom,controller.signal).then(image=>{if(!controller.signal.aborted)setOverlay(image);}).catch(e=>{if(!controller.signal.aborted)setFeatureError(e.message);});return()=>controller.abort();},[activeCustom]);
-  const renderStrip = useCallback((...args:Parameters<typeof baseRenderStrip>)=>{
-    if(activeCustom?.overlay&&!overlay)throw new Error('Frame artwork is still preparing. Please retry.');
-    args[9]={crops,decorations,overlay,customFrame:!!activeCustom};return baseRenderStrip(...args);
-  },[crops,decorations,overlay,activeCustom]);
+  const activeLayout = LAYOUTS[activeLayoutId];
+  const renderStrip = useCallback((...args: Parameters<typeof baseRenderStrip>) => {
+    args[9] = { crops, decorations };
+    return baseRenderStrip(...args);
+  }, [crops, decorations]);
   const draftPhotos = useMemo(()=>capturedPhotos.map((frames,i)=>({id:`photo-${i}`,name:`Photo ${i+1}`,frames:frames.map(canvas=>canvas.toDataURL('image/jpeg',.88))})),[capturedPhotos]);
-  const draftProject = useMemo<StudioProject>(()=>({photos:draftPhotos,layoutId:activeLayoutId,themeId:activeThemeId,filterId:activeFilterId,lens:lensEffect,grain:grainIntensity,showDate,caption:customCaption,frames:slotFrameIndices,crops,decorations,customTemplate}),[draftPhotos,activeLayoutId,activeThemeId,activeFilterId,lensEffect,grainIntensity,showDate,customCaption,slotFrameIndices,crops,decorations,customTemplate]);
-  const restoreProject = useCallback((project:StudioProject)=>{
-    void photoCanvases(project.photos).then(photos=>{sessionAbortRef.current?.abort();setCapturedPhotos(photos);setActiveLayoutId(project.layoutId);setActiveThemeId(project.themeId);setActiveFilterId(project.filterId);setLensEffect(project.lens);setGrainIntensity(project.grain);setShowDate(project.showDate);setCustomCaption(project.caption);setSlotFrameIndices(project.frames);setSelectedPhotoIndex(project.frames[0]??0);setActiveSlotPickerIdx('all');setCrops(project.crops);setDecorations(project.decorations);setCustomTemplate(project.customTemplate);setScreen('review');setFeatureMessage('Local session restored.');}).catch(e=>setFeatureError(e.message));
-  },[]);
+  const draftProject = useMemo<StudioProject>(()=>({photos:draftPhotos,layoutId:activeLayoutId,themeId:activeThemeId,filterId:activeFilterId,lens:lensEffect,grain:grainIntensity,showDate,caption:customCaption,frames:slotFrameIndices,crops,decorations}),[draftPhotos,activeLayoutId,activeThemeId,activeFilterId,lensEffect,grainIntensity,showDate,customCaption,slotFrameIndices,crops,decorations]);
+  const restoreProject = useCallback(async (project: StudioProject) => {
+    const photos = await photoCanvases(project.photos);
+    sessionAbortRef.current?.abort();
+    setCapturedPhotos(photos);
+    setActiveLayoutId(project.layoutId);
+    setActiveThemeId(project.themeId);
+    setActiveFilterId(project.filterId);
+    setLensEffect(project.lens);
+    setGrainIntensity(project.grain);
+    setShowDate(project.showDate);
+    setCustomCaption(project.caption);
+    setSlotFrameIndices(project.frames);
+    setSelectedPhotoIndex(project.frames[0] ?? 0);
+    setActiveSlotPickerIdx('all');
+    setRetakeTargetSlot(null);
+    setCrops(project.crops);
+    setDecorations(project.decorations);
+    setCaptureState('completed');
+    setScreen('review');
+    setFeatureError('');
+    setFeatureMessage('Local session restored.');
+  }, []);
   const draft = useDraft(draftProject,restoreProject);
-  async function imported(photos:StudioPhoto[]){try{const canvases=await photoCanvases(photos);sessionAbortRef.current?.abort();setCapturedPhotos(canvases);setActiveLayoutId(customTemplate?.slots.length===photos.length?customTemplate.id:layoutForCount(photos.length).id);setSlotFrameIndices(photos.map(()=>0));setSelectedPhotoIndex(0);setCrops(photos.map(defaultCrop));setDecorations([]);setIsAnimatedPreview(false);setCaptureState('completed');setScreen('review');setFeatureError('');}catch(e){setFeatureError((e as Error).message);}}
-  const applyTemplate=(template:StudioTemplate)=>{if(capturedPhotos.length&&capturedPhotos.length!==template.slots.length)throw new Error(`This frame needs ${template.slots.length} photos. Start a new session or import that number first.`);setCustomTemplate(template);setActiveLayoutId(template.id);setFeatureMessage('Custom frame selected. Its artwork controls the footer and date area.');};
-  const sessionTools=<div className="sol-additions"><DraftBar draft={draft}/><ImportPhotos onImported={photos=>void imported(photos)} onError={setFeatureError} disabled={!draft.ready||isExporting}/><TemplateEditor onApply={applyTemplate}/></div>;
 
-  const activeTheme = CARD_THEMES[activeThemeId];
   const currentFilter = VISUAL_FILTERS[activeFilterId];
 
   // Preload lobby specimen preview graphics to prevent hover lag
@@ -305,12 +291,12 @@ export default function Photobooth() {
           videoElement.srcObject = stream;
           videoElement.onloadedmetadata = () => {
             if (!active) return;
-            void videoElement.play().catch(()=>{if(active)setFeatureError('Camera playback failed. Retry or import photos.');});
+            void videoElement.play().catch(()=>{if(active)setFeatureError('Camera playback failed. Return to the menu and reopen the studio to try again.');});
             setIsCameraReady(true);
           };
         }
       } catch (err) {
-        if(active)setFeatureError('Camera unavailable or permission denied. You can import photos instead.');
+        if(active)setFeatureError('Camera unavailable. Check your browser’s camera permission, then reopen the studio.');
         setIsCameraReady(false);
       }
     }
@@ -490,7 +476,7 @@ export default function Photobooth() {
       if (screen === 'active' && isCameraReady && captureState === 'idle') {
         if (e.key === ' ' || e.key === 'Enter') {
           e.preventDefault();
-          void runSession().catch(e=>{setCaptureState('idle');setFeatureError(e instanceof Error?e.message:'Capture failed. Please retry or import photos.');});
+          void runSession().catch(e=>{setCaptureState('idle');setFeatureError(e instanceof Error?e.message:'Capture failed. Please try again.');});
         }
       }
     };
@@ -505,7 +491,7 @@ export default function Photobooth() {
 
   // Re-generate dynamic high-end preview strip on changes (pre-computing 5 burst frames when animated, FE-01, FEAT-01, FEAT-04)
   useEffect(() => {
-    if (screen !== 'review' || capturedPhotos.length === 0 || activeCustom?.overlay && !overlay) return;
+    if (screen !== 'review' || capturedPhotos.length === 0) return;
 
     if (isAnimatedPreview) {
       const urls = [0, 1, 2, 3, 4].map((idx) =>
@@ -549,7 +535,7 @@ export default function Photobooth() {
     activeFilterId,
     lensEffect,
     isAnimatedPreview,
-    customCaption, renderStrip, activeCustom, overlay,
+    customCaption, renderStrip,
   ]);
 
   // Animated "Live" Preview cycling effect over pre-computed DataURLs (zero canvas re-renders in interval, FE-01)
@@ -661,23 +647,11 @@ export default function Photobooth() {
   const triggerExport = (format:'jpg'|'png'|'gif') => { void handleExport(format); };
   async function shareCurrent(){
     if(isUploadingCloud||!capturedPhotos.length)return;setIsUploadingCloud(true);setFeatureError('');setShowThankYouPopup(true);
-    try{const full=renderStrip(capturedPhotos,activeLayout,grainIntensity,showDate,slotFrameIndices,activeThemeId,activeFilterId,lensEffect,customCaption),small=document.createElement('canvas'),scale=Math.min(1,1200/Math.max(full.width,full.height));small.width=Math.round(full.width*scale);small.height=Math.round(full.height*scale);small.getContext('2d')?.drawImage(full,0,0,small.width,small.height);let imageUrl='';for(const quality of [.88,.72,.55]){imageUrl=small.toDataURL('image/jpeg',quality);if(imageUrl.length<=800000)break;}if(imageUrl.length>800000)throw new Error('Cloud copy is too large. Download locally or use smaller photos.');const payload={imageUrl,layout:activeLayoutId,format:'jpg' as const,caption:customCaption,ttlHours:shareTtlHours},fingerprint=JSON.stringify(payload);if(operation.current?.fingerprint!==fingerprint)operation.current={fingerprint,key:crypto.randomUUID()};const share=await createCloudShare(payload,operation.current.key);setCloudShare(share);setShareUrl(socialShareUrl(share.id));setFeatureMessage('Cloud link created. Anyone with the link can view this snapshot.');}catch(e){setFeatureError(e instanceof Error?e.message:'Cloud sharing failed. Your local photos are safe.');}finally{setIsUploadingCloud(false);}
+    try{const full=renderStrip(capturedPhotos,activeLayout,grainIntensity,showDate,slotFrameIndices,activeThemeId,activeFilterId,lensEffect,customCaption),small=document.createElement('canvas'),scale=Math.min(1,1200/Math.max(full.width,full.height));small.width=Math.round(full.width*scale);small.height=Math.round(full.height*scale);small.getContext('2d')?.drawImage(full,0,0,small.width,small.height);let imageUrl='';for(const quality of [.88,.72,.55]){imageUrl=small.toDataURL('image/jpeg',quality);if(imageUrl.length<=800000)break;}if(imageUrl.length>800000)throw new Error('Cloud copy is too large. Download this strip locally.');const payload={imageUrl,layout:activeLayoutId,format:'jpg' as const,caption:customCaption,ttlHours:shareTtlHours},fingerprint=JSON.stringify(payload);if(operation.current?.fingerprint!==fingerprint)operation.current={fingerprint,key:crypto.randomUUID()};const share=await createCloudShare(payload,operation.current.key);setCloudShare(share);setShareUrl(socialShareUrl(share.id));setFeatureMessage('Cloud link created. Anyone with the link can view this snapshot.');}catch(e){setFeatureError(e instanceof Error?e.message:'Cloud sharing failed. Your local photos are safe.');}finally{setIsUploadingCloud(false);}
   }
 
-  useEffect(() => {
-    let timer: any = null;
-    if (showAdOverlay && adCountdown > 0) {
-      timer = setInterval(() => {
-        setAdCountdown((prev) => prev - 1);
-      }, 1000);
-    }
-    return () => {
-      if (timer) clearInterval(timer);
-    };
-  }, [showAdOverlay, adCountdown]);
-
   const startNewSession = () => {
-    if(!draft.ready){setFeatureError('Open Import / recover session to restore or discard the saved draft first.');return;}
+    if(!draft.ready){setFeatureError('Open Local session recovery to restore or discard the saved draft first.');return;}
     sessionAbortRef.current?.abort();
     setCrops([]);setDecorations([]);setFeatureError('');
     setIsFlashing(true);
@@ -685,6 +659,7 @@ export default function Photobooth() {
       void draft.discard(false);
       setCapturedPhotos([]);
       setCaptureState('idle');
+      setRetakeTargetSlot(null);
       setPreviewCanvasDataUrl(null);
       setAnimatedFrameUrls([]);
       setLensEffect('none');
@@ -706,6 +681,7 @@ export default function Photobooth() {
     setTimeout(() => {
       setCapturedPhotos([]);
       setCaptureState('idle');
+      setRetakeTargetSlot(null);
       setPreviewCanvasDataUrl(null);
       setAnimatedFrameUrls([]);
       setLensEffect('none');
@@ -782,8 +758,7 @@ export default function Photobooth() {
               scrollToTop={scrollToTop}
               scrollToSection={scrollToSection}
               isScrolled={isScrolled}
-              featureTools={sessionTools}
-              photoImport={<div className="sol-additions lobby-import"><ImportPhotos onImported={photos => void imported(photos)} onError={setFeatureError} disabled={!draft.ready || isExporting} /></div>}
+              draftControls={<DraftBar draft={draft} />}
             />
           </motion.div>
         )}
@@ -812,7 +787,6 @@ export default function Photobooth() {
             {/* Workspace Sidebar controls */}
             <aside className="w-full md:w-80 bg-[#0f0f0f] md:border-r border-[#2a2a2a] p-6 md:p-8 flex flex-col shrink-0 md:overflow-y-auto order-3 md:order-1">
 
-              {sessionTools}
               {/* Back to main landing */}
               <button
                 onClick={returnToMenu}
@@ -825,13 +799,17 @@ export default function Photobooth() {
                 <img src="/logo.png" alt="S.O.L Logo" className="h-9 w-auto object-contain" />
               </div>
 
+              <details className="sol-additions">
+                <summary>Local session recovery</summary>
+                <DraftBar draft={draft} />
+              </details>
+
               <div className="space-y-6 flex-grow">
                 {/* 1. Layout Configuration Selection */}
                 <section>
                   <label className="text-[11px] uppercase tracking-widest text-[#888] font-semibold block mb-3">Frame Configuration</label>
                   <div className="grid grid-cols-5 md:grid-cols-3 gap-2">
-                    {[...Object.values(LAYOUTS),...(customTemplate?[templateLayout(customTemplate)]:[])].map((layout) => {
-                      const locked = isLocked(layout.id);
+                    {Object.values(LAYOUTS).map((layout) => {
                       return (
                         <button
                           key={layout.id}
@@ -843,17 +821,10 @@ export default function Photobooth() {
                             "aspect-square border flex flex-col gap-1 p-1.5 items-center justify-center transition-all disabled:opacity-30 rounded-xs cursor-pointer relative",
                             activeLayoutId === layout.id
                               ? "border-white bg-white/5 text-white"
-                              : locked
-                                ? "border-[#222] hover:border-amber-500/50 text-[#888] hover:text-amber-500"
-                                : "border-[#222] hover:border-[#444] text-[#888] hover:text-white"
+                              : "border-[#222] hover:border-[#444] text-[#888] hover:text-white"
                           )}
                           title={layout.name}
                         >
-                          {locked && (
-                            <div className="absolute top-1 right-1 bg-black/80 border border-amber-500/30 p-[2px] rounded-full">
-                              <Lock className="w-2 h-2 text-amber-500" />
-                            </div>
-                          )}
                           {layout.id === '1x3' && <div className="w-3.5 h-5 border border-current opacity-60"></div>}
                           {layout.id === '1x4' && <div className="w-3.5 h-6 border border-current opacity-60"></div>}
                           {layout.id === '2x2' && (
@@ -1097,7 +1068,7 @@ export default function Photobooth() {
 
               <div className="space-y-6 flex-grow">
 
-                <details className="sol-additions"><summary>Import & session recovery</summary><DraftBar draft={draft}/><ImportPhotos onImported={photos=>void imported(photos)} onError={setFeatureError}/></details>
+                <details className="sol-additions"><summary>Local session recovery</summary><DraftBar draft={draft}/></details>
                 {/* 1. Select Theme Card Template */}
                 <section>
                   <label className="text-[11px] uppercase tracking-widest text-[#888] font-semibold block mb-2.5">Card Material Theme</label>
@@ -1274,7 +1245,7 @@ export default function Photobooth() {
                   </p>
                 </section>
 
-                <div className="sol-additions"><details><summary>Crop & align photo {typeof activeSlotPickerIdx==='number'?activeSlotPickerIdx+1:1}</summary><p>Select a slot above to edit another photo.</p><CropControls value={crops[typeof activeSlotPickerIdx==='number'?activeSlotPickerIdx:0]??defaultCrop()} onChange={crop=>{const index=typeof activeSlotPickerIdx==='number'?activeSlotPickerIdx:0;setCrops(previous=>Array.from({length:capturedPhotos.length},(_,i)=>i===index?crop:previous[i]??defaultCrop()));}}/></details><details><summary>Stickers & drawings</summary><DecorationControls value={decorations} onChange={setDecorations} drawing={drawing} onDrawing={setDrawing} color={ink} onColor={setInk} onHistory={commit=>{decorationCommit.current=commit;}}/></details><TemplateEditor onApply={applyTemplate}/></div>
+                <div className="sol-additions"><details><summary>Crop & align photo {typeof activeSlotPickerIdx==='number'?activeSlotPickerIdx+1:1}</summary><p>Select a slot above to edit another photo.</p><CropControls value={crops[typeof activeSlotPickerIdx==='number'?activeSlotPickerIdx:0]??defaultCrop()} onChange={crop=>{const index=typeof activeSlotPickerIdx==='number'?activeSlotPickerIdx:0;setCrops(previous=>Array.from({length:capturedPhotos.length},(_,i)=>i===index?crop:previous[i]??defaultCrop()));}}/></details><details><summary>Stickers & drawings</summary><DecorationControls value={decorations} onChange={setDecorations} drawing={drawing} onDrawing={setDrawing} color={ink} onColor={setInk} onHistory={commit=>{decorationCommit.current=commit;}}/></details></div>
                 {/* 2b. AI Retro Caption & Cloud Link TTL (FEAT-01, FEAT-05) */}
                 <section className="pt-4 border-t border-[#222] space-y-3">
                   <div className="flex justify-between items-center">
@@ -1546,8 +1517,6 @@ export default function Photobooth() {
                   <button
                     onClick={() => {
                       playDing();
-                      setIsPremium(true);
-                      localStorage.setItem('sol_premium', 'true');
                       setShowPremiumModal(false);
                     }}
                     className="w-full py-2.5 bg-gradient-to-r from-rose-500/20 to-rose-700/20 border border-rose-500/30 hover:border-rose-500/60 text-rose-455 hover:text-rose-400 text-[10px] font-bold uppercase tracking-wider transition-colors rounded-sm cursor-pointer"
@@ -1702,94 +1671,6 @@ export default function Photobooth() {
                 <div className="pt-2 text-[9px] text-stone-600 font-mono">
                   Click anywhere outside or ✕ to close
                 </div>
-              </motion.div>
-            </div>
-          )}
-        </AnimatePresence>
-
-        {/* Fullscreen Countdown Ad Overlay */}
-        <AnimatePresence>
-          {showAdOverlay && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto">
-              {/* Backdrop */}
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="absolute inset-0 bg-black/95 backdrop-blur-md"
-              />
-
-              {/* Ad Card container */}
-              <motion.div
-                initial={{ scale: 0.95, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                exit={{ scale: 0.95, opacity: 0 }}
-                className="relative w-full max-w-lg bg-[#141414] border border-stone-800 rounded-xl p-8 text-center space-y-6 shadow-3xl z-10 font-mono"
-              >
-                {/* Header info */}
-                <div className="space-y-1">
-                  <span className="text-[10px] uppercase font-mono tracking-[0.25em] text-[#8e1616] font-bold">
-                    S.O.L Studio Sponsor Interstitial
-                  </span>
-                  <h2 className="font-serif text-3xl italic text-white leading-tight">
-                    Processing Film Strip
-                  </h2>
-                  <div className="h-[2px] w-12 bg-stone-800 mx-auto my-2" />
-                </div>
-
-                {/* Main simulated ad display area */}
-                <div className="bg-black/50 border border-stone-900 p-6 rounded-lg relative overflow-hidden flex flex-col items-center justify-center min-h-[160px] gap-3">
-                  <Heart className="w-10 h-10 text-[#8e1616]/30 animate-pulse" style={{ fill: 'rgba(142, 22, 22, 0.1)' }} />
-                  <p className="text-xs text-stone-300 font-bold uppercase tracking-wider">
-                    SNAP OF LOVE • ANALOG EMOTIONS
-                  </p>
-                  <p className="text-[10px] text-stone-500 max-w-[280px] leading-relaxed">
-                    S.O.L is 100% free and cardless. Support our free plan by following our releases on Instagram!
-                  </p>
-                  <a
-                    href="https://www.instagram.com/snapoflove.id/"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 text-[9px] uppercase tracking-widest text-[#8e1616] hover:text-[#b02a2a] underline font-bold mt-2"
-                  >
-                    @snapoflove.id <Instagram className="w-3.5 h-3.5 inline ml-1" />
-                  </a>
-                </div>
-
-                {/* Progress bar simulation */}
-                <div className="space-y-2 text-left">
-                  <div className="flex justify-between text-[10px] text-stone-500 uppercase tracking-wider font-bold">
-                    <span>Developing exposure...</span>
-                    <span>{adCountdown > 0 ? `${adCountdown}s remaining` : 'Complete'}</span>
-                  </div>
-                  <div className="h-1.5 w-full bg-[#1e1e1e] rounded-none overflow-hidden relative border border-stone-900">
-                    <motion.div
-                      initial={{ width: '0%' }}
-                      animate={{ width: `${((5 - adCountdown) / 5) * 100}%` }}
-                      className="absolute inset-y-0 left-0 bg-[#8e1616]"
-                    />
-                  </div>
-                </div>
-
-                {/* Skip CTA Button */}
-                <button
-                  disabled={adCountdown > 0}
-                  onClick={() => {
-                    if (pendingExportFormat) {
-                      handleExport(pendingExportFormat);
-                    }
-                    setShowAdOverlay(false);
-                    setPendingExportFormat(null);
-                  }}
-                  className={cn(
-                    "w-full py-4.5 text-xs font-bold uppercase tracking-[0.25em] transition-all select-none cursor-pointer border-0",
-                    adCountdown > 0
-                      ? "bg-stone-900 text-stone-500 border border-stone-850 cursor-not-allowed"
-                      : "bg-white text-black hover:bg-stone-200"
-                  )}
-                >
-                  {adCountdown > 0 ? `Skip Ad in ${adCountdown}s` : 'Skip Ad & Save File'}
-                </button>
               </motion.div>
             </div>
           )}

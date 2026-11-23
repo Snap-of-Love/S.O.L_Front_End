@@ -2,9 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { clearDraft, loadDraft, saveDraft } from './storage';
 import type { DraftRecord, StudioProject } from './project';
 
-export function useDraft(project: StudioProject, onRestore: (project: StudioProject) => void) {
+export function useDraft(project: StudioProject, onRestore: (project: StudioProject) => Promise<void>) {
   const restore = useRef(onRestore); restore.current = onRestore;
   const [pending, setPending] = useState<DraftRecord | null>(null), [ready, setReady] = useState(false);
+  const [restoring, setRestoring] = useState(false);
   const [enabled, setEnabled] = useState(() => { try { return localStorage.getItem('sol_drafts_enabled') !== 'false'; } catch { return true; } });
   const [status, setStatus] = useState('Checking for a local draft…'), [error, setError] = useState('');
   const latest = useRef(project); latest.current = project;
@@ -27,11 +28,27 @@ export function useDraft(project: StudioProject, onRestore: (project: StudioProj
     window.addEventListener('pagehide', flush); document.addEventListener('visibilitychange', hidden);
     return () => { window.removeEventListener('pagehide', flush); document.removeEventListener('visibilitychange', hidden); };
   }, []);
-  const resume = () => { if (pending) { restore.current(pending.project); setPending(null); setReady(true); setError(''); setStatus('Draft restored.'); } };
+  const resume = async () => {
+    if (!pending || restoring) return;
+    setRestoring(true);
+    setError('');
+    setStatus('Restoring your photos…');
+    try {
+      await restore.current(pending.project);
+      setPending(null);
+      setReady(true);
+      setStatus('Draft restored.');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Unable to restore the draft.');
+      setStatus('');
+    } finally {
+      setRestoring(false);
+    }
+  };
   const discard = useCallback(async (disable = true) => {
     if (disable) { enabledRef.current = false; setEnabled(false); }
     try { await clearDraft(); setPending(null); setReady(true); setError(''); if (disable) setEnabled(false); setStatus('Local draft cleared.'); }
     catch (reason) { setError(reason instanceof Error ? reason.message : 'Draft could not be cleared.'); }
   }, []);
-  return { pending, ready, enabled, setEnabled, status, error, resume, discard };
+  return { pending, ready, restoring, enabled, setEnabled, status, error, resume, discard };
 }

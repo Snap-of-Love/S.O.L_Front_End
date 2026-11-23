@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { saveDraft, loadDraft, clearDraft, closeStudioDatabase, writeLocal } from '../src/studio/storage.ts';
+import { saveDraft, loadDraft, clearDraft, closeStudioDatabase, openStudioDatabase } from '../src/studio/storage.ts';
 import { emptyProject, DRAFT_RETENTION_MS } from '../src/studio/project.ts';
 
 test('draft survives connection recreation, rejects stale writes and clears on request', async () => {
@@ -13,6 +13,13 @@ test('draft survives connection recreation, rejects stale writes and clears on r
 });
 test('expired drafts are deleted while corrupt drafts produce a recoverable error', async () => {
   await clearDraft(); await saveDraft(emptyProject(), Date.now() - DRAFT_RETENTION_MS - 1000); assert.equal(await loadDraft(), null);
-  await writeLocal('drafts', 'active', { version: 999 }); await assert.rejects(loadDraft());
+  const db = await openStudioDatabase();
+  await new Promise<void>((resolve, reject) => {
+    const transaction = db.transaction('drafts', 'readwrite');
+    transaction.objectStore('drafts').put({ version: 999 }, 'active');
+    transaction.oncomplete = () => resolve();
+    transaction.onabort = () => reject(transaction.error);
+  });
+  await assert.rejects(loadDraft());
   await clearDraft(); assert.equal(await loadDraft(), null); await closeStudioDatabase();
 });
